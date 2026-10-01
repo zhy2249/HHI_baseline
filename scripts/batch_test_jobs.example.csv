@@ -1,0 +1,3 @@
+enabled,experiment,name,encoder,decoder,cfgs,sequence_cfg,input,qps,frames,extra_args,decode_md5,xlsm_tag
+1,baseline,BasketballDrill,bin/EncoderAppStatic,bin/DecoderAppStatic,cfg/encoder_lowdelay_nx2High.cfg,cfg/per-sequence/BasketballDrill.cfg,,"22,27,32,37",250,,1,lb
+0,variant01,BasketballDrill,/absolute/path/to/variant01/EncoderApp,/absolute/path/to/variant01/DecoderApp,cfg/encoder_lowdelay_nx2High.cfg,cfg/per-sequence/BasketballDrill.cfg,,"22,27,32,37",250,,1,lb
