@@ -3,7 +3,7 @@
 ## 实现身份
 
 - 基线：`5da139f22ffe9a281d8d9e4f0b7b4b22cba5326b`，NextSoftware2 fixed baseline。
-- 分支：`experiment/gtt4x4-nx2high`，实现修订 `context-v2-r1`。
+- 分支：`experiment/gtt-nx2high`，实现修订 `context-v2-r1`。分支名预留其他尺寸的 GTT 扩展；本文记录的已实现范围仍为 4×4。
 - 协议版本：**2**。原外部方案的版本 1 是旁路 flag 草案，本实现拒绝它；未同时实现旁路实验模式。
 - 本轮按用户明确要求实现专用 CABAC context，并统计最终实际写出 flag 中 1 的占比。
 - `TypeDef.h` 中 `HHI_GTT4X4` 默认 **0**；运行参数 `GTT4x4`、`GTT4x4Stats` 默认均为 0。

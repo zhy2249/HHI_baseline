@@ -10,7 +10,7 @@
 | --- | --- |
 | 审查日期 | 2026-10-29 |
 | 工作目录 | `/home/zhy/HHI/HHI_GTT` |
-| 实验分支 | `experiment/gtt4x4-nx2high` |
+| 实验分支 | `experiment/gtt-nx2high` |
 | 基线提交 | `5da139f22ffe9a281d8d9e4f0b7b4b22cba5326b` |
 | 原方案 | [HHI_baseline_GTT4x4_nx2High_Codex_Implementation_Plan.md](../external_inputs/gtt4x4_nx2high/HHI_baseline_GTT4x4_nx2High_Codex_Implementation_Plan.md) |
 | 原方案 SHA256 | `e2bb12a04946abd09a8ba45afdaa5f34c13cc8aa85ac2a6d8d48f31576868f12` |
