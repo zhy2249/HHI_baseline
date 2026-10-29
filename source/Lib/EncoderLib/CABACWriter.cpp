@@ -3258,6 +3258,9 @@ void CABACWriter::transform_unit_last(const TransformUnit &tu, CUCtx &cuCtx, Par
   bool cbf[3]    = { TU::getCbf(tu, COMP_Y), chromaCbfs.Cb, chromaCbfs.Cr };
   bool cbfLuma   = (cbf[COMP_Y] != 0);
   bool cbfChroma = false;
+#if HHI_GTT4X4
+  CHECK(tu.Y().valid() && !cbfLuma && tu.gttFlag, "Zero-CBF luma cannot retain GTT4x4 mode");
+#endif
 
   if (!lumaOnly)
   {
@@ -3429,6 +3432,29 @@ void CABACWriter::joint_cb_cr(const TransformUnit &tu, const int cbfMask)
   }
 }
 
+#if HHI_GTT4X4
+void CABACWriter::gtt_flag(const TransformUnit &tu, CompID compID)
+{
+  if (compID != COMP_Y)
+  {
+    return;
+  }
+  if (!TU::isGttFlagPresent(tu, compID))
+  {
+    CHECK(tu.gttFlag, "GTT4x4 flag set when syntax is absent");
+    return;
+  }
+  CHECK(tu.gttFlag && tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2, "GTT4x4 requires DCT2 placeholder");
+  m_binEncoder.encodeBin(tu.gttFlag, Ctx::GttFlag());
+  if (m_gttFlagStats && isEncoding())
+  {
+    ++m_gttFlagStats->total;
+    m_gttFlagStats->ones += tu.gttFlag ? 1 : 0;
+  }
+  DTRACE(g_trace_ctx, D_SYNTAX, "gtt_flag() pos=(%d,%d) flag=%d\n", tu.Y().x, tu.Y().y, int(tu.gttFlag));
+}
+#endif
+
 void CABACWriter::residual_coding_last(const TransformUnit &tu, CompID compID, CUCtx *cuCtx)
 {
   const CodingUnit &cu = *tu.cu;
@@ -3442,6 +3468,13 @@ void CABACWriter::residual_coding_last(const TransformUnit &tu, CompID compID, C
   }
 
   ts_flag(tu, compID);
+
+#if HHI_GTT4X4
+  gtt_flag(tu, compID);
+  const bool updateLegacyConstraints = compID != COMP_Y || !tu.gttFlag;
+#else
+  const bool updateLegacyConstraints = true;
+#endif
 
   if (tu.mtsIdx[compID] == MtsType::SKIP && !tu.cs->slice->m_tsResidualCodingDisabledFlag)
   {
@@ -3471,7 +3504,8 @@ void CABACWriter::residual_coding_last(const TransformUnit &tu, CompID compID, C
   CHECK(tu.lastPos[compID] < 0, "Coefficient coding called for empty TU");
   cctx.setScanPosLast(tu.lastPos[compID]);
 
-  if (cuCtx && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 && tu.blocks[compID].width >= 4)
+  if (updateLegacyConstraints && cuCtx && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 &&
+      tu.blocks[compID].width >= 4)
   {
     const uint32_t width     = tu.blocks[compID].width;
     const uint32_t height    = tu.blocks[compID].height;
@@ -3480,12 +3514,13 @@ void CABACWriter::residual_coding_last(const TransformUnit &tu, CompID compID, C
       (allowNSPT ? PU::getNSPTMatrixDim(width, height) : PU::getLFNSTMatrixDim(width, height)) - 1;
     cuCtx->violatesLfnstConstrained[toChannelType(compID)] |= cctx.scanPosLast() > maxLfnstPos;
   }
-  if (cuCtx && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 && tu.blocks[compID].width >= 4)
+  if (updateLegacyConstraints && cuCtx && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 &&
+      tu.blocks[compID].width >= 4)
   {
     const int lfnstLastScanPosTh = isLuma(compID) ? LFNST_LAST_SIG_LUMA : LFNST_LAST_SIG_CHROMA;
     cuCtx->lfnstLastScanPos |= cctx.scanPosLast() >= lfnstLastScanPosTh;
   }
-  if (cuCtx && isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP)
+  if (updateLegacyConstraints && cuCtx && isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP)
   {
     cuCtx->mtsLastScanPos |= cctx.scanPosLast() >= 1;
     cuCtx->mtsCoeffAbsSum = tu.getCoeffs(compID).computeAbsSum();

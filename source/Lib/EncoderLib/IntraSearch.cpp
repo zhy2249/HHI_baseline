@@ -38,6 +38,7 @@
 #include "IntraSearch.h"
 #include "EncModeCtrl.h"
 #include "EncCfg.h"
+#include "GttSearch.h"
 
 #include "CommonLib/CommonDef.h"
 #include "CommonLib/Rom.h"
@@ -3676,7 +3677,11 @@ void IntraSearch::xPredTuChroma(TransformUnit &tu, PelBuf &predCb, PelBuf &predC
   }
 }
 
-bool IntraSearch::xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum)
+bool IntraSearch::xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum
+#if HHI_GTT4X4
+                                       , const Gtt4x4QuantResult *gttResult
+#endif
+                                       )
 {
   CodingStructure &cs       = *tu.cs;
   const CompArea  &area     = tu.blocks[COMP_Y];
@@ -3706,7 +3711,20 @@ bool IntraSearch::xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, P
 
   //===== quantization =====
   const QpParam qp(tu, COMP_Y);
+#if HHI_GTT4X4
+  if (gttResult)
+  {
+    installGtt4x4Candidate(tu, *gttResult);
+    absSum = gttResult->absSum;
+  }
+  else
+  {
+    tu.gttFlag = false;
+#endif
   m_pcTrQuant->quantNxN(tu, COMP_Y, qp, absSum, m_CABACEstimator->getCtx(), ptList.trCoeffs);
+#if HHI_GTT4X4
+  }
+#endif
   DTRACE(g_trace_ctx, D_TU_ABS_SUM, "%d: comp=%d, abssum=%d\n", DTRACE_GET_COUNTER(g_trace_ctx, D_TU_ABS_SUM), COMP_Y,
          absSum);
 
@@ -4061,7 +4079,16 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
     int        numMTSInvalid     = 0;
     size_t     numTrTypes        = ptList.trTypes.size();
 
-    if (numTrTypes > 1)
+#if HHI_GTT4X4
+    const bool tryGtt = TU::isGttApplicable(tu, COMP_Y) && !csFull->slice->m_isLossless;
+    const CUCtx cuCtxStart = cuCtx;
+    CUCtx cuCtxBest = cuCtx;
+#endif
+    if (numTrTypes > 1
+#if HHI_GTT4X4
+        || tryGtt
+#endif
+        )
     {
       saveCS.pcv     = cs.pcv;
       saveCS.picture = cs.picture;
@@ -4100,6 +4127,10 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         m_CABACEstimator->getCtx() = ctxStart;
       }
 
+#if HHI_GTT4X4
+      tu.gttFlag = false;
+      if (tryGtt) { cuCtx = cuCtxStart; }
+#endif
       tu.mtsIdx[COMP_Y]       = trType;
       tu.derivedIntraDirsLuma = ptList.derivedIntraDirs;
       TCoeff absSum           = 0;
@@ -4153,7 +4184,11 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         singleFracBits = singleTmpFracBits;
         bestCbf        = modeCbf;
 
-        if (!isLstTest)
+        if (!isLstTest
+#if HHI_GTT4X4
+            || tryGtt
+#endif
+            )
         {
           saveCS.getRecoBuf(tu.Y()).copyFrom(csFull->getRecoBuf(tu.Y()));
           if (KEEP_PRED_AND_RESI_SIGNALS || ENABLE_NNLF)
@@ -4168,9 +4203,67 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
 
           bestTU->copyComponentFrom(tu, COMP_Y);
           ctxBest = m_CABACEstimator->getCtx();
+#if HHI_GTT4X4
+          if (tryGtt) { cuCtxBest = cuCtx; }
+#endif
         }
       }
     }
+
+#if HHI_GTT4X4
+    if (tryGtt)
+    {
+      CHECK(singleCost == MAX_DOUBLE || !bestTU, "GTT search requires a saved legacy winner");
+      auto scoreCandidate = [&](const Gtt4x4QuantResult &candidate)
+      {
+        m_CABACEstimator->getCtx() = ctxStart;
+        cuCtx = cuCtxStart;
+        tu.mtsIdx[COMP_Y] = MtsType::DCT2_DCT2;
+        tu.gttFlag = candidate.absSum != 0;
+        tu.derivedIntraDirsLuma = ptList.derivedIntraDirs;
+        TCoeff absSum = 0;
+        Distortion dist = 0;
+        CHECK(!xIntraCodingTUBlockLuma(tu, dist, ptList, absSum, &candidate), "Invalid GTT candidate");
+        const uint64_t bits = xGetIntraFracBitsQT(*csFull, partitioner, true, false, &cuCtx, &cuCtxIntra);
+        const double cost = m_pcRdCost->calcRdCost(bits, dist);
+        if (cost < singleCost)
+        {
+          singleCost = cost;
+          singleDistLuma = dist;
+          singleFracBits = bits;
+          bestCbf = absSum != 0;
+          bestTU->copyComponentFrom(tu, COMP_Y);
+          saveCS.getRecoBuf(tu.Y()).copyFrom(csFull->getRecoBuf(tu.Y()));
+          if (KEEP_PRED_AND_RESI_SIGNALS || ENABLE_NNLF)
+          {
+            saveCS.getPredBuf(tu.Y()).copyFrom(csFull->getPredBuf(tu.Y()));
+          }
+          if (KEEP_PRED_AND_RESI_SIGNALS)
+          {
+            saveCS.getResiBuf(tu.Y()).copyFrom(csFull->getResiBuf(tu.Y()));
+            saveCS.getOrgResiBuf(tu.Y()).copyFrom(csFull->getOrgResiBuf(tu.Y()));
+          }
+          ctxBest = m_CABACEstimator->getCtx();
+          cuCtxBest = cuCtx;
+        }
+      };
+
+      Gtt4x4QuantResult zero;
+      zero.feasible = true;
+      scoreCandidate(zero);
+      tu.gttFlag = true;
+      tu.mtsIdx[COMP_Y] = MtsType::DCT2_DCT2;
+#if RDOQ_CHROMA_LAMBDA
+      m_pcTrQuant->selectLambda(COMP_Y);
+#endif
+      const auto candidates = generateGtt4x4Candidates(
+        *m_pcTrQuant, tu, CPelBuf(ptList.res, tu.Y()), ctxStart);
+      for (const auto &candidate : candidates) { scoreCandidate(candidate); }
+      // Every extended-channel winner was saved, including the last legacy test.
+      isLstBest = false;
+      cuCtx = cuCtxBest;
+    }
+#endif
 
     if (!isLstBest)
     {

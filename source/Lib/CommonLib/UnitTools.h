@@ -313,6 +313,10 @@ namespace TU
 bool getCbf(const TransformUnit &tu, const CompID &compID);
 bool getCbfAtDepth(const TransformUnit &tu, const CompID &compID, const unsigned &depth);
 void setCbfAtDepth(TransformUnit &tu, const CompID &compID, const unsigned &depth, const bool &cbf);
+#if HHI_GTT4X4
+bool isGttApplicable(const TransformUnit &tu, const CompID compID);
+bool isGttFlagPresent(const TransformUnit &tu, const CompID compID);
+#endif
 bool isTSAllowed(const TransformUnit &tu, const CompID &compID);
 bool isMTSAllowed(const TransformUnit &tu, const CompID &compID);
 bool lfnstAllowed(const TransformUnit &tu, const CompID &compID);

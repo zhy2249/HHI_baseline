@@ -37,6 +37,10 @@
 #include "UnitTools.h"
 
 #include <bitset>
+#if HHI_GTT4X4
+#include "Gtt4x4QuantRouting.h"
+#include <cmath>
+#endif
 
 #include "ContextModelling.h"
 
@@ -772,6 +776,10 @@ public:
                               bool enableScalingLists, int *piDequantCoef, const uint64_t stateTransTab) const;
   void           initQuantBlock(const TransformUnit &tu, const CompID compID, const QpParam &cQP, const double lambda,
                                 int gValue);
+#if HHI_GTT4X4
+  void initQuantBlockGtt(const TransformUnit &tu, const CompID compID, const QpParam &cQP, double lambda,
+                         uint64_t maxSourceMagnitude);
+#endif
   inline bool    preQuantAbsTCQ(const TCoeff absCoeff, PQData *pqData, TCoeff quanCoeff) const;
   inline bool    preQuantAbsSQ(const TCoeff absCoeff, PQData *pqData, TCoeff quanCoeff) const;
   inline TCoeff  getLastThreshold() const { return m_thresLast; }
@@ -866,6 +874,53 @@ void Quantizer::initQuantBlock(const TransformUnit &tu, const CompID compID, con
     (int64_t)(nomDistFactor * double(int64_t(1) << (m_DistShift)) * double(int64_t(1) << (m_QShift)) + .5);
   m_DistOrgFact = (int64_t)(nomDistFactor * double(int64_t(1) << (m_DistShift + 1)) + .5);
 }
+
+#if HHI_GTT4X4
+void Quantizer::initQuantBlockGtt(const TransformUnit &tu, const CompID compID, const QpParam &cQP,
+                                 const double lambda, const uint64_t maxSourceMagnitude)
+{
+  // The reconstruction range remains 15 bits. Only the proxy-distortion
+  // accumulator precision adapts to the wider forward coefficients, which can
+  // arise from unclipped blended predictors. Do not clip those coefficients.
+  const SPS &sps = *tu.cs->sps;
+  const int qpDq = cQP.Qp(false) + 1;
+  const int qpPer = qpDq / 6;
+  const int qpRem = qpDq % 6;
+  const int channelBitDepth = sps.m_bitDepths[toChannelType(compID)];
+  const int dynamicRange = sps.getMaxLog2TrDynamicRange(toChannelType(compID));
+  const int transformShift = getTransformShift(channelBitDepth, tu.blocks[compID].size(), dynamicRange);
+  m_QShift = QUANT_SHIFT - 1 + qpPer + transformShift;
+  CHECK(m_QShift < 0 || m_QShift > 60, "Unsupported GTT quantization shift");
+  m_QAdd = -((int64_t(3) << m_QShift) >> 1);
+  m_QScale = g_quantScales[0][qpRem];
+  const int invShift = IQUANT_SHIFT + 1 - qpPer - transformShift;
+  const unsigned qIdxBd = std::min<unsigned>(dynamicRange + 1, 8 * sizeof(Intermediate_Int) + invShift -
+                                                                  IQUANT_SHIFT - 1);
+  m_maxQIdx = (1 << (qIdxBd - 1)) - 4;
+  // The new search deliberately has no last-position amplitude threshold.
+  m_thresLast = 0;
+
+  const int sourceRange = std::max(dynamicRange, ceil_log2(std::max<uint64_t>(1, maxSourceMagnitude)));
+  const int nomDShift = SCALE_BITS - 2 * (transformShift + DISTORTION_PRECISION_ADJUSTMENT(channelBitDepth)) +
+    m_QShift;
+  const double qScale2 = double(m_QScale * m_QScale);
+  const double nominalFactor = std::ldexp(1.0, nomDShift) / (qScale2 * lambda);
+  const double factorBound = nominalFactor * qScale2;
+  CHECK(!std::isfinite(factorBound) || factorBound < 0 || factorBound >= double(int64_t(1) << 62),
+        "GTT lambda exceeds the representable fixed-point cost range");
+  const int dfShift = ceil_log2(uint64_t(factorBound) + 1);
+  m_DistShift = 62 + m_QShift - 2 * sourceRange - dfShift;
+  CHECK(m_DistShift < 0 || m_DistShift > 61, "GTT source/lambda exceeds the fixed-point cost range");
+  m_DistAdd = (int64_t(1) << m_DistShift) >> 1;
+  const double stepFactor = std::ldexp(nominalFactor, m_DistShift + m_QShift);
+  const double originalFactor = std::ldexp(nominalFactor, m_DistShift + 1);
+  CHECK(!std::isfinite(stepFactor) || !std::isfinite(originalFactor) ||
+          stepFactor >= double(int64_t(1) << 62) || originalFactor >= double(int64_t(1) << 62),
+        "GTT distortion factors exceed the fixed-point cost range");
+  m_DistStepAdd = int64_t(stepFactor + 0.5);
+  m_DistOrgFact = int64_t(originalFactor + 0.5);
+}
+#endif
 
 static const int coeffShiftArray[64] = { 0, 63, 31, 21, 15, 12, 10, 9, 7, 7, 6, 5, 5, 4, 4, 4, 3, 3, 3, 3, 3, 3,
                                          2, 2,  2,  2,  2,  2,  2,  2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -1626,6 +1681,11 @@ public:
              const Ctx &ctx, TCoeff &absSum, bool enableScalingLists, int *quantCoeff);
   void dequant(const TransformUnit &tu, CoeffBuf &recCoeff, const CompID compID, const QpParam &cQP,
                bool enableScalingLists, int *quantCoeff);
+#if HHI_GTT4X4
+  bool quantGtt4x4(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID, const QpParam &cQP,
+                   const double lambda, const Ctx &ctx, const Gtt4x4Constraints &constraints,
+                   Gtt4x4QuantResult &result);
+#endif
 
   int  m_baseLevel;
   bool m_extRiceRRCFlag;
@@ -2051,6 +2111,235 @@ void DepQuant::quant(TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID 
   tu.lastPos[compID] = scanIdx - 1;
 }
 
+#if HHI_GTT4X4
+bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID,
+                          const QpParam &cQP, const double lambda, const Ctx &ctx,
+                          const Gtt4x4Constraints &constraints, Gtt4x4QuantResult &result)
+{
+  // This branch never installs levels into the caller's TU. A failed constrained
+  // search is not a request to fall back to ordinary quantization.
+  result = Gtt4x4QuantResult {};
+  CHECK(!TU::isGttApplicable(tu, compID) || !tu.gttFlag || tu.mtsIdx[compID] != MtsType::DCT2_DCT2,
+        "GTT quantization requires an applicable GTT luma TU with the DCT2 placeholder");
+  CHECK(srcCoeff.width != 4 || srcCoeff.height != 4 || !srcCoeff.buf,
+        "GTT quantization requires a complete 4x4 source buffer");
+  CHECK(constraints.minLastScan > constraints.maxLastScan || constraints.maxLastScan >= 16,
+        "Invalid GTT last-position interval");
+  for (const int parity: constraints.requiredParity)
+  {
+    CHECK(parity < -1 || parity > 1, "Invalid GTT parity constraint");
+  }
+  CHECK(!(lambda > 0.0) || !std::isfinite(lambda), "Invalid GTT quantization lambda");
+  CHECK(cQP.Qp(false) < 0 || cQP.Qp(false) > MAX_QP + tu.cs->sps->m_qpBDOffset[ChannelType::LUMA],
+        "Invalid GTT quantization QP");
+
+  const TUParameters &tuPars = *g_Rom.getTUPars(tu.blocks[compID], compID, 0);
+  CHECK(tuPars.m_width != 4 || tuPars.m_height != 4 || tuPars.m_numCoeff != 16 || tuPars.m_numSbb != 1 ||
+          tuPars.m_log2SbbSize != 4,
+        "GTT quantization only supports a single 16-coefficient coding group");
+  for (int i = 0; i < 16; i++)
+  {
+    CHECK(tuPars.m_scanInfo[i].spt != SCAN_ISCSBB || tuPars.m_scanInfo[i].eosbb != (i == 0),
+          "Unexpected GTT coding-group scan layout");
+  }
+
+  // All rate/quantization and survivor state is initialized for this invocation;
+  // no previous legacy candidate or GTT path supplies hidden state.
+  uint64_t maxSourceMagnitude = 0;
+  for (int y = 0; y < 4; y++)
+  {
+    for (int x = 0; x < 4; x++)
+    {
+      const int64_t source = srcCoeff.at(x, y);
+      const uint64_t magnitude = source < 0 ? uint64_t(-source) : uint64_t(source);
+      CHECK(magnitude > uint64_t(std::numeric_limits<TCoeff>::max()), "GTT source magnitude exceeds TCoeff");
+      maxSourceMagnitude = std::max(maxSourceMagnitude, magnitude);
+    }
+  }
+  Quantizer quantizer;
+  quantizer.initQuantBlockGtt(tu, compID, cQP, lambda, maxSourceMagnitude);
+  const TCoeff quantCoeff = TCoeff(quantizer.getQScale());
+  const int baseLevel = ctx.getBaseLevel();
+  const bool extRiceFlag = tu.cs->sps->m_spsRangeExtension.m_rrcRiceExtensionEnableFlag;
+  CHECK(extRiceFlag, "GTT does not support extended Rice coding");
+  RateEstimator rateEstimator;
+  rateEstimator.initCtx(tuPars, tu, compID, ctx.getFracBitsAcess());
+
+  // Physical DQ state is slot / 2. The slot's low bit is the added group parity.
+  // CommonCtx is only a constructor reference: no single-CG update calls it.
+#define GTT_STATE(s) { rateEstimator, m_commonCtx, s }
+  State states[2][8] = {
+    { GTT_STATE(0), GTT_STATE(0), GTT_STATE(1), GTT_STATE(1),
+      GTT_STATE(2), GTT_STATE(2), GTT_STATE(3), GTT_STATE(3) },
+    { GTT_STATE(0), GTT_STATE(0), GTT_STATE(1), GTT_STATE(1),
+      GTT_STATE(2), GTT_STATE(2), GTT_STATE(3), GTT_STATE(3) }
+  };
+  State startState GTT_STATE(0);
+#undef GTT_STATE
+  startState.init(4, 4);
+  for (auto &generation: states)
+  {
+    for (auto &state: generation)
+    {
+      state.init(4, 4);
+    }
+  }
+  State *prev = states[0];
+  State *curr = states[1];
+  bool active[8] = {};
+  constexpr int64_t unreachable = std::numeric_limits<int64_t>::max() >> 2;
+  const Decision invalid = { unreachable, -1, -2 };
+  Decision trace[16][8];
+  for (auto &stage: trace)
+  {
+    std::fill(std::begin(stage), std::end(stage), invalid);
+  }
+
+  for (int scanIdx = constraints.maxLastScan; scanIdx >= 0; scanIdx--)
+  {
+    const ScanInfo &scanInfo = tuPars.m_scanInfo[scanIdx];
+    const auto &scan = tuPars.m_scanId2BlkPos[scanIdx];
+    const TCoeff source = srcCoeff.at(scan.x, scan.y);
+    const int64_t absSource = source < 0 ? -int64_t(source) : int64_t(source);
+    CHECK(absSource > std::numeric_limits<TCoeff>::max(), "GTT source magnitude exceeds TCoeff");
+    PQData pqData[4] = {};
+    const bool nearZero = quantizer.preQuantAbsTCQ(TCoeff(absSource), pqData, quantCoeff);
+    Decision *destinations = trace[scanIdx];
+    const int group = scanIdx / 4;
+    const int targetParity = constraints.requiredParity[group];
+
+    const auto route = [&](Decision decision, const int physicalState, const int parity, const int prevSlot)
+    {
+      if (decision.prevId == -2 || decision.rdCost >= unreachable)
+      {
+        return;
+      }
+      const int nextSlot = Gtt4x4QuantRouting::nextSlot(2 * physicalState + parity, decision.absLevel & 1,
+                                                       scanIdx, targetParity, g_stateTransTab[1]);
+      if (nextSlot < 0)
+      {
+        return;
+      }
+      decision.prevId = prevSlot;
+      Decision &destination = destinations[nextSlot];
+      // Stable slot/even/odd/start order; equal costs keep the first survivor.
+      if (decision.rdCost < destination.rdCost)
+      {
+        destination = decision;
+      }
+    };
+
+    for (int slot = 0; slot < 8; slot++)
+    {
+      if (!active[slot])
+      {
+        continue;
+      }
+      const int physicalState = slot / 2;
+      Decision even = invalid;
+      Decision odd = invalid;
+      if (nearZero)
+      {
+        prev[slot].checkRdCostsOdd1(SCAN_ISCSBB, pqData[(physicalState & 1) ? 1 : 2], odd, even);
+      }
+      else
+      {
+        prev[slot].checkRdCosts(SCAN_ISCSBB, pqData[(physicalState & 1) ? 3 : 0],
+                               pqData[(physicalState & 1) ? 1 : 2], even, odd);
+      }
+      route(even, physicalState, slot & 1, slot);
+      route(odd, physicalState, slot & 1, slot);
+    }
+
+    if (scanIdx >= constraints.minLastScan)
+    {
+      // A new last position leaves all higher groups at zero. This also handles
+      // artificial constraint sets used to test infeasible zero suffixes.
+      if (Gtt4x4QuantRouting::lastStartAllowed(scanIdx, constraints.requiredParity))
+      {
+        const int last = rateEstimator.lastOffset(scanIdx, 4, 4, tu.cu->slice->m_reverseLastSigCoeffFlag);
+        if (!nearZero)
+        {
+          Decision evenStart = invalid;
+          startState.checkRdCostStart(last, pqData[0], evenStart);
+          route(evenStart, 0, 0, -1);
+        }
+        Decision oddStart = invalid;
+        startState.checkRdCostStart(last, pqData[2], oddStart);
+        route(oddStart, 0, 0, -1);
+      }
+    }
+
+    if (scanIdx > 0)
+    {
+      for (int slot = 0; slot < 8; slot++)
+      {
+        active[slot] = destinations[slot].prevId != -2;
+        if (active[slot])
+        {
+          curr[slot].updateState<true>(scanInfo, prev, destinations[slot], baseLevel, extRiceFlag);
+        }
+      }
+      std::swap(prev, curr);
+    }
+  }
+
+  int bestSlot = -1;
+  int64_t bestCost = unreachable;
+  for (int slot = 0; slot < 8; slot++)
+  {
+    if (trace[0][slot].prevId != -2 && trace[0][slot].rdCost < bestCost)
+    {
+      bestSlot = slot;
+      bestCost = trace[0][slot].rdCost;
+    }
+  }
+  if (bestSlot < 0)
+  {
+    return false;
+  }
+
+  Gtt4x4QuantResult candidate;
+  candidate.proxyCost = bestCost;
+  int slot = bestSlot;
+  int64_t absSum = 0;
+  for (int scanIdx = 0; scanIdx <= constraints.maxLastScan; scanIdx++)
+  {
+    CHECK(slot < 0 || slot >= 8, "Invalid GTT traceback slot");
+    const Decision &decision = trace[scanIdx][slot];
+    CHECK(decision.prevId < -1 || decision.absLevel < 0, "Invalid GTT traceback decision");
+    const auto &scan = tuPars.m_scanId2BlkPos[scanIdx];
+    candidate.qRaster[scan.idx] = srcCoeff.at(scan.x, scan.y) < 0 ? -decision.absLevel : decision.absLevel;
+    absSum += decision.absLevel;
+    if (decision.prevId == -1)
+    {
+      CHECK(!decision.absLevel || scanIdx < constraints.minLastScan, "Invalid GTT last coefficient");
+      candidate.lastScan = scanIdx;
+      break;
+    }
+    slot = decision.prevId;
+  }
+  CHECK(candidate.lastScan < 0 || absSum <= 0 || absSum > std::numeric_limits<TCoeff>::max(),
+        "Invalid GTT nonzero result");
+  for (int g = 0; g < 4; g++)
+  {
+    int parity = 0;
+    for (int i = 4 * g; i < 4 * g + 4; i++)
+    {
+      const TCoeff level = candidate.qRaster[tuPars.m_scanId2BlkPos[i].idx];
+      parity ^= int((level < 0 ? -int64_t(level) : int64_t(level)) & 1);
+      CHECK(i > candidate.lastScan && level, "Nonzero GTT suffix after last position");
+    }
+    CHECK(constraints.requiredParity[g] >= 0 && parity != constraints.requiredParity[g],
+          "GTT traceback violates its parity constraint");
+  }
+  candidate.absSum = TCoeff(absSum);
+  candidate.feasible = true;
+  result = candidate;
+  return true;
+}
+#endif
+
 };   // namespace DQIntern
 
 //===== interface class =====
@@ -2108,6 +2397,17 @@ void DepQuant::quant(TransformUnit &tu, const CompID &compID, const CCoeffBuf &p
     QuantRDOQ::quant(tu, compID, pSrc, absSum, cQP, ctx);
   }
 }
+
+#if HHI_GTT4X4
+bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &srcCoeff,
+                          const QpParam &cQP, const Ctx &ctx, const Gtt4x4Constraints &constraints,
+                          Gtt4x4QuantResult &result)
+{
+  CHECK(!m_useRDOQ, "GTT quantization requires RDOQ");
+  return static_cast<DQIntern::DepQuant *>(p)->quantGtt4x4(tu, srcCoeff, compID, cQP, Quant::m_dLambda, ctx,
+                                                        constraints, result);
+}
+#endif
 
 void DepQuant::dequant(const TransformUnit &tu, CoeffBuf &dstCoeff, const CompID &compID, const QpParam &cQP)
 {

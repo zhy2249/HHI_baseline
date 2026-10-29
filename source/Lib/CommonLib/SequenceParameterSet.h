@@ -291,6 +291,8 @@ struct SPS
   bool                 m_temporalIdNestingFlag { false };   // temporal_id_nesting_flag
   bool                 m_scalingListEnabledFlag { false };
   bool                 m_depQuantEnabledFlag { false };   // dependent quantization enabled flag
+  bool                 m_gtt4x4Enabled { false };
+  uint8_t              m_gtt4x4Version { 0 };
   bool                 m_signDataHidingEnabledFlag { false };   // sign data hiding enabled flag
   int                  m_numPredSign { 0 };   // Number of predicted transform coefficient signs
   int                  m_log2SignPredArea { 0 };   // Log2 of width/height of area for sign prediction
@@ -450,6 +452,26 @@ struct SPS
   {
     return m_spsRangeExtension.m_extendedPrecisionProcessingFlag ? std::min<int>(20, int(m_bitDepths[channelType] + 6))
                                                                  : 15;
+  }
+
+  // Kept in unsupported builds as well, so an experimental stream is never silently accepted.
+  void validateGtt4x4() const
+  {
+    if (!m_gtt4x4Enabled)
+    {
+      CHECK(m_gtt4x4Version != 0, "Disabled GTT4x4 SPS must have version zero");
+      return;
+    }
+#if !HHI_GTT4X4
+    THROW("This build does not support GTT4x4 bitstreams");
+#else
+    CHECK(m_gtt4x4Version != 2, "Unsupported GTT4x4 version (expected context-coded version 2)");
+    CHECK(m_bitDepths[ChannelType::LUMA] != 10 || getMaxLog2TrDynamicRange(ChannelType::LUMA) != 15,
+          "GTT4x4 requires 10-bit luma and transform dynamic range 15");
+    CHECK(m_scalingListEnabledFlag, "GTT4x4 does not support scaling lists");
+    CHECK(!m_depQuantEnabledFlag, "GTT4x4 requires dependent quantization capability");
+    CHECK(m_spsRangeExtension.settingsDifferFromDefaults(), "GTT4x4 requires default range-extension settings");
+#endif
   }
 
   void setChromaQpMappingTableFromParams(const ChromaQpMappingTableParams &params, const int qpBdOffset)

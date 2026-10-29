@@ -56,6 +56,12 @@
 // clang-format off
 #define ENABLE_NNLF                                       1
 
+// Experimental grouped-tree transform. Select explicitly in source, never through CMake.
+#define HHI_GTT4X4                                        0
+#if HHI_GTT4X4 != 0 && HHI_GTT4X4 != 1
+#error HHI_GTT4X4 must be 0 or 1
+#endif
+
 
 //########### place marcos for debug
 #define JVET_TRANSSION_DEBUG                              0
@@ -1071,6 +1077,7 @@ enum FastInterSearchMode
 enum SPSExtensionFlagIndex
 {
   SPS_EXT__REXT           = 0,
+  SPS_EXT__GTT4X4         = 1, // Private experiment extension; recognized even in unsupported builds.
   NUM_SPS_EXTENSION_FLAGS = 8
 };
 

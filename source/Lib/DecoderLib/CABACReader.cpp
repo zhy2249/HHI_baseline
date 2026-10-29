@@ -3699,6 +3699,14 @@ void CABACReader::transform_unit_last(TransformUnit &tu, CUCtx &cuCtx, Partition
   bool lumaOnly  = !isChromaEnabled(cu.chromaFormat) || !tu.blocks[COMP_Cb].valid();
   bool cbfLuma   = (tu.cbf[COMP_Y] != 0);
   bool cbfChroma = (lumaOnly ? false : (chromaCbfs.Cb || chromaCbfs.Cr));
+#if HHI_GTT4X4
+  if (tu.Y().valid() && !cbfLuma)
+  {
+    tu.gttFlag = false;
+    tu.lastPos[COMP_Y] = -1;
+    tu.getCoeffs(COMP_Y).fill(0);
+  }
+#endif
 
   if ((cu.lwidth() > MAX_TB_SIZEY || cu.lheight() > MAX_TB_SIZEY || cbfLuma || cbfChroma) &&
       (!CS::isDualITree(*cu.cs) || isLuma(tu.chType)))
@@ -3862,6 +3870,19 @@ void CABACReader::joint_cb_cr(TransformUnit &tu, const int cbfMask)
   }
 }
 
+#if HHI_GTT4X4
+void CABACReader::gtt_flag(TransformUnit &tu, CompID compID)
+{
+  if (compID != COMP_Y)
+  {
+    return;
+  }
+  tu.gttFlag = TU::isGttFlagPresent(tu, compID) ? bool(m_binDecoder.decodeBin(Ctx::GttFlag())) : false;
+  CHECK(tu.gttFlag && tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2, "GTT4x4 requires DCT2 placeholder");
+  DTRACE(g_trace_ctx, D_SYNTAX, "gtt_flag() pos=(%d,%d) flag=%d\n", tu.Y().x, tu.Y().y, int(tu.gttFlag));
+}
+#endif
+
 void CABACReader::residual_coding_last(TransformUnit &tu, CompID compID, CUCtx &cuCtx)
 {
   const CodingUnit &cu = *tu.cu;
@@ -3875,6 +3896,13 @@ void CABACReader::residual_coding_last(TransformUnit &tu, CompID compID, CUCtx &
   }
 
   ts_flag(tu, compID);
+
+#if HHI_GTT4X4
+  gtt_flag(tu, compID);
+  const bool updateLegacyConstraints = compID != COMP_Y || !tu.gttFlag;
+#else
+  const bool updateLegacyConstraints = true;
+#endif
 
   if (tu.mtsIdx[compID] == MtsType::SKIP && !tu.cs->slice->m_tsResidualCodingDisabledFlag)
   {
@@ -3891,7 +3919,8 @@ void CABACReader::residual_coding_last(TransformUnit &tu, CompID compID, CUCtx &
   cctx.setScanPosLast(last_sig_coeff(cctx, tu, compID));
   tu.lastPos[compID] = cctx.scanPosLast();
 
-  if (tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 && tu.blocks[compID].width >= 4)
+  if (updateLegacyConstraints && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 &&
+      tu.blocks[compID].width >= 4)
   {
     const uint32_t width     = tu.blocks[compID].width;
     const uint32_t height    = tu.blocks[compID].height;
@@ -3900,12 +3929,13 @@ void CABACReader::residual_coding_last(TransformUnit &tu, CompID compID, CUCtx &
       (allowNSPT ? PU::getNSPTMatrixDim(width, height) : PU::getLFNSTMatrixDim(width, height)) - 1;
     cuCtx.violatesLfnstConstrained[toChannelType(compID)] |= cctx.scanPosLast() > maxLfnstPos;
   }
-  if (tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 && tu.blocks[compID].width >= 4)
+  if (updateLegacyConstraints && tu.mtsIdx[compID] != MtsType::SKIP && tu.blocks[compID].height >= 4 &&
+      tu.blocks[compID].width >= 4)
   {
     const int lfnstLastScanPosTh = isLuma(compID) ? LFNST_LAST_SIG_LUMA : LFNST_LAST_SIG_CHROMA;
     cuCtx.lfnstLastScanPos |= cctx.scanPosLast() >= lfnstLastScanPosTh;
   }
-  if (isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP)
+  if (updateLegacyConstraints && isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP)
   {
     cuCtx.mtsLastScanPos |= cctx.scanPosLast() >= 1;
   }
@@ -3963,7 +3993,11 @@ void CABACReader::residual_coding_coef(TransformUnit &tu, CompID compID, CUCtx &
     residual_coding_subblock(cctx, coeff, stateTransTab, state);
   }
   tu.numPredAreaSigns[compID] = cctx.numSignsPredArea();
-  if (isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP)
+  if (isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP
+#if HHI_GTT4X4
+      && !tu.gttFlag
+#endif
+  )
   {
     cuCtx.mtsCoeffAbsSum = tu.getCoeffs(compID).computeAbsSum();
   }

@@ -836,6 +836,79 @@ void TrQuant::xInvNspt(const TransformUnit &tu, const TCoeff *src, TCoeff *dst, 
   }
 }
 
+#if HHI_GTT4X4
+void TrQuant::forwardGtt4x4Dct(const TransformUnit &tu, const CPelBuf &resi, CoeffBuf &dstCoeff)
+{
+  CHECK(!TU::isGttApplicable(tu, COMP_Y), "Unsupported GTT4x4 forward transform");
+  CHECK(!resi.buf || !dstCoeff.buf || resi.width != 4 || resi.height != 4 || resi.stride < 4 ||
+          dstCoeff.width != 4 || dstCoeff.height != 4 || dstCoeff.stride < 4,
+        "GTT4x4 forward transform requires complete 4x4 buffers");
+  TCoeff block[16], tmp[16], result[16];
+  for (int y = 0; y < 4; ++y)
+  {
+    for (int x = 0; x < 4; ++x)
+    {
+      const TCoeff value = resi.buf[y * resi.stride + x];
+      // Some prediction blends can overshoot the nominal sample range. Keep
+      // their original residual; the two 4-point stages are safe for all Pel.
+      block[y * 4 + x] = value;
+    }
+  }
+  const int matrixShift = g_transformMatrixShift[TRANSFORM_FORWARD];
+  const int bitDepth = tu.cs->sps->m_bitDepths[ChannelType::LUMA];
+  const int dynamicRange = tu.cs->sps->getMaxLog2TrDynamicRange(ChannelType::LUMA);
+  const int shift1st = floorLog2(4) + bitDepth + matrixShift - dynamicRange + COM16_C806_TRANS_PREC;
+  const int shift2nd = floorLog2(4) + matrixShift + COM16_C806_TRANS_PREC;
+  fastForwardDCT2_B4(block, tmp, shift1st, 4, 0, 0);
+  fastForwardDCT2_B4(tmp, result, shift2nd, 4, 0, 0);
+  for (int y = 0; y < 4; ++y)
+  {
+    std::copy_n(result + 4 * y, 4, dstCoeff.buf + dstCoeff.stride * y);
+  }
+}
+
+void TrQuant::inverseGtt4x4Dct(const TransformUnit &tu, const CCoeffBuf &coeff, PelBuf &resi)
+{
+  CHECK(!coeff.buf || !resi.buf || coeff.width != 4 || coeff.height != 4 || coeff.stride < 4 ||
+          resi.width != 4 || resi.height != 4 || resi.stride < 4,
+        "GTT4x4 inverse transform requires complete 4x4 buffers");
+  TCoeff block[16], tmp[16], result[16];
+  for (int y = 0; y < 4; ++y)
+  {
+    for (int x = 0; x < 4; ++x)
+    {
+      const TCoeff value = coeff.buf[y * coeff.stride + x];
+      CHECK(value < -55929 || value > 55929, "GTT4x4 inverse coefficient exceeds the proved range");
+      block[y * 4 + x] = value;
+    }
+  }
+  const int matrixShift = g_transformMatrixShift[TRANSFORM_INVERSE];
+  const int bitDepth = tu.cs->sps->m_bitDepths[ChannelType::LUMA];
+  const int dynamicRange = tu.cs->sps->getMaxLog2TrDynamicRange(ChannelType::LUMA);
+  const int shift1st = matrixShift + 1 + COM16_C806_TRANS_PREC;
+  const int shift2nd = matrixShift + dynamicRange - 1 - bitDepth + COM16_C806_TRANS_PREC;
+  const TCoeff clipMin = -(1 << dynamicRange);
+  const TCoeff clipMax = (1 << dynamicRange) - 1;
+  fastInverseDCT2_B4(block, tmp, shift1st, 4, 0, 0, clipMin, clipMax);
+  fastInverseDCT2_B4(tmp, result, shift2nd, 4, 0, 0, std::numeric_limits<Pel>::min(),
+                   std::numeric_limits<Pel>::max());
+  for (int y = 0; y < 4; ++y)
+  {
+    for (int x = 0; x < 4; ++x)
+    {
+      resi.buf[y * resi.stride + x] = Pel(result[y * 4 + x]);
+    }
+  }
+}
+
+bool TrQuant::quantGtt4x4(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &pathCoeffRaster,
+                        const QpParam &cQP, const Ctx &ctx, const Gtt4x4Constraints &constraints,
+                        Gtt4x4QuantResult &result)
+{
+  return m_quant->quantGtt4x4(tu, compID, pathCoeffRaster, cQP, ctx, constraints, result);
+}
+#endif
+
 void TrQuant::invTransformNxN(TransformUnit &tu, const CompID &compID, PelBuf &pResi, const QpParam &cQP,
                               bool skipDequant)
 {
@@ -847,6 +920,21 @@ void TrQuant::invTransformNxN(TransformUnit &tu, const CompID &compID, PelBuf &p
   CHECK(uiWidth > tu.cs->sps->getMaxTbSize() || uiHeight > tu.cs->sps->getMaxTbSize(),
         "Maximal allowed transformation size exceeded!");
   CoeffBuf tempCoeff = CoeffBuf(m_tempCoeff, area);
+#if HHI_GTT4X4
+  if (compID == COMP_Y && tu.gttFlag)
+  {
+    CHECK(!TU::isGttFlagPresent(tu, compID) || tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2,
+          "Invalid GTT4x4 inverse transform mode");
+    CHECK(skipDequant, "GTT4x4 must perform complete dependent dequantization");
+    const Gtt4x4Path path = deriveGtt4x4Path(tu.getCoeffs(COMP_Y));
+    xDeQuant(tu, tempCoeff, compID, cQP);
+    DTRACE_COEFF_BUF(D_TCOEFF, tempCoeff, tu, tu.cu->predMode, compID);
+    inverseGtt4x4Path(tempCoeff, path, tempCoeff);
+    inverseGtt4x4Dct(tu, tempCoeff, pResi);
+    DTRACE_PEL_BUF(D_RESIDUALS, pResi, tu, tu.cu->predMode, compID);
+    return;
+  }
+#endif
   if (!skipDequant)
   {
     xDeQuant(tu, tempCoeff, compID, cQP);
@@ -1450,6 +1538,13 @@ void TrQuant::xQuant(TransformUnit &tu, const CompID &compID, const CCoeffBuf &p
 void TrQuant::preCalcTrans(TransformUnit &tu, const CompID &compID, const CPelBuf &res, const TransList &tl,
                            TransBuffer &tbuf, const bool dctAvailable)
 {
+#if HHI_GTT4X4
+  const bool savedGttFlag = tu.gttFlag;
+  if (compID == COMP_Y)
+  {
+    tu.gttFlag = false;
+  }
+#endif
   const CompArea &area      = tu.blocks[compID];
   const MtsType   trOrg     = tu.mtsIdx[compID];
   const bool      allowNSPT = TU::isNSPTAllowed(area.width, area.height);
@@ -1486,11 +1581,20 @@ void TrQuant::preCalcTrans(TransformUnit &tu, const CompID &compID, const CPelBu
     }
   }
   tu.mtsIdx[compID] = trOrg;
+#if HHI_GTT4X4
+  tu.gttFlag = savedGttFlag;
+#endif
 }
 
 void TrQuant::quantNxN(TransformUnit &tu, const CompID &compID, const QpParam &cQP, TCoeff &absSum, const Ctx &ctx,
                        TransBuffer &tcoeff)
 {
+#if HHI_GTT4X4
+  if (compID == COMP_Y)
+  {
+    tu.gttFlag = false;
+  }
+#endif
   absSum = 0;
   if (tu.noResidual)
   {

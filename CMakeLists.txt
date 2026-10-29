@@ -226,6 +226,13 @@ add_subdirectory( "source/App/EncoderApp" )
 add_subdirectory( "source/App/SEIRemovalApp" )
 add_subdirectory( "source/App/Parcat" )
 add_subdirectory( "source/App/CabacTraining" )
+
+# This option only builds synthetic tests. The algorithm switch is in TypeDef.h.
+option( GTT4X4_BUILD_TESTS "Build synthetic GTT4x4 tests (no video encoding)" OFF )
+if( GTT4X4_BUILD_TESTS )
+  enable_testing()
+  add_subdirectory( tests/gtt4x4 )
+endif()
 if( NX2_EXTENSION_360_VIDEO )
   add_subdirectory( "source/App/utils/360ConvertApp" )
 endif()

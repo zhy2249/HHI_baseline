@@ -612,6 +612,10 @@ void EncLib::init(AUWriterIf *auWriterIf)
   xInitPicHeader(m_picHeader, sps0, pps0);
 
   // initialize processing unit classes
+#if HHI_GTT4X4
+  m_gttFlagStats = {};
+  m_CABACEncoder.getCABACWriter(&sps0)->setGttFlagStats(m_encCfg.m_gtt4x4Stats ? &m_gttFlagStats : nullptr);
+#endif
   m_cEncModeCtrl.init(&m_encCfg, &m_cRateCtrl, &m_cRdCost, &m_adaptQPmap);
   m_cGOPEncoder.init(this, &m_cEncModeCtrl);
   m_cSliceEncoder.init(this, sps0);
@@ -1986,7 +1990,30 @@ void EncLib::xInitSPS(SPS &sps)
   sps.m_licEnabledFlag               = m_encCfg.m_licMode != 0;
   sps.m_biLicEnabledFlag             = m_encCfg.m_licMode == 2;
   sps.m_useInterRPL                  = m_encCfg.m_interRPL;
+  sps.m_gtt4x4Enabled                = m_encCfg.m_gtt4x4Enabled;
+  sps.m_gtt4x4Version                = m_encCfg.m_gtt4x4Enabled ? 2 : 0;
+  sps.validateGtt4x4();
 }
+
+#if HHI_GTT4X4
+void EncLib::printGtt4x4Stats() const
+{
+  if (!m_encCfg.m_gtt4x4Stats)
+  {
+    return;
+  }
+  if (m_gttFlagStats.total)
+  {
+    msg(NOTICE, "GTT4x4_FLAG_STATS layer=%d total=%llu ones=%llu percent=%.6f%%\n", m_layerId,
+        static_cast<unsigned long long>(m_gttFlagStats.total), static_cast<unsigned long long>(m_gttFlagStats.ones),
+        100.0 * double(m_gttFlagStats.ones) / double(m_gttFlagStats.total));
+  }
+  else
+  {
+    msg(NOTICE, "GTT4x4_FLAG_STATS layer=%d total=0 ones=0 percent=N/A\n", m_layerId);
+  }
+}
+#endif
 
 void EncLib::xInitHrdParameters(SPS &sps)
 {

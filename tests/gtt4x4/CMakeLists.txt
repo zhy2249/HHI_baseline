@@ -1,0 +1,7 @@
+foreach( suite Common Quant Syntax Search )
+  add_executable( Gtt4x4${suite}Tests ${suite}Tests.cpp )
+  target_link_libraries( Gtt4x4${suite}Tests PRIVATE EncoderLib DecoderLib CommonLib Threads::Threads )
+  add_test( NAME Gtt4x4${suite} COMMAND Gtt4x4${suite}Tests )
+  set_tests_properties( Gtt4x4${suite} PROPERTIES SKIP_RETURN_CODE 77 )
+endforeach()
+add_custom_target( Gtt4x4UnitTests DEPENDS Gtt4x4CommonTests Gtt4x4QuantTests Gtt4x4SyntaxTests Gtt4x4SearchTests )

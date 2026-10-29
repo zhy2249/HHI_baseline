@@ -48,6 +48,9 @@
 #include "Quant.h"
 
 #include "DepQuant.h"
+#if HHI_GTT4X4
+#include "Gtt4x4.h"
+#endif
 //! \ingroup CommonLib
 //! \{
 
@@ -105,6 +108,12 @@ public:
                     const bool dctAvailable = false);
   void quantNxN(TransformUnit &tu, const CompID &compID, const QpParam &cQP, TCoeff &absSum, const Ctx &ctx,
                 TransBuffer &tcoeff);
+#if HHI_GTT4X4
+  void forwardGtt4x4Dct(const TransformUnit &tu, const CPelBuf &resi, CoeffBuf &dstCoeff);
+  bool quantGtt4x4(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &pathCoeffRaster,
+                  const QpParam &cQP, const Ctx &ctx, const Gtt4x4Constraints &constraints,
+                  Gtt4x4QuantResult &result);
+#endif
 
   void transformSkipQuantOneSample(TransformUnit &tu, const CompID &compID, const TCoeff &resiDiff, TCoeff &coeff,
                                    const uint32_t &uiPos, const QpParam &cQP, const bool bUseHalfRoundingPoint);
@@ -178,6 +187,9 @@ private:
 
   // inverse transform
   void xIT(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &pCoeff, PelBuf &pResidual);
+#if HHI_GTT4X4
+  void inverseGtt4x4Dct(const TransformUnit &tu, const CCoeffBuf &coeff, PelBuf &resi);
+#endif
 
   // inverse skipping transform
   void xITransformSkip(const CCoeffBuf &plCoef, PelBuf &pResidual, const TransformUnit &tu, const CompID &component);

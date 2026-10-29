@@ -46,6 +46,13 @@
 //! \{
 
 class EncCu;
+#if HHI_GTT4X4
+struct GttFlagStats
+{
+  uint64_t total { 0 };
+  uint64_t ones { 0 };
+};
+#endif
 class CABACWriter : public DeriveCtx
 {
 public:
@@ -82,6 +89,10 @@ public:
   uint64_t              getEstFracBits() const { return m_binEncoder.getEstFracBits(); }
   uint32_t              getNumBins() { return m_binEncoder.getNumBins(); }
   bool                  isEncoding() { return m_binEncoder.isEncoding(); }
+#if HHI_GTT4X4
+  void                  setGttFlagStats(GttFlagStats *stats) { m_gttFlagStats = stats; }
+  void                  gtt_flag(const TransformUnit &tu, CompID compID);
+#endif
   void                  setBinBufferActive(bool b) { m_binEncoder.setBinBufferActive(b); }
   void                  setBinBuffer(BinStoreVector *bb) { m_binEncoder.setBinBuffer(bb); }
   const BinStoreVector *getBinBuffer() const { return m_binEncoder.getBinBuffer(); }
@@ -266,6 +277,9 @@ private:
   Ctx              m_testCtx;
   EncCu           *m_encCu;
   ScanElement     *m_scanOrder;
+#if HHI_GTT4X4
+  GttFlagStats    *m_gttFlagStats { nullptr };
+#endif
 };
 
 class CABACEncoder

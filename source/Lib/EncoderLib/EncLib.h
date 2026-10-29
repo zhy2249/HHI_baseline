@@ -99,6 +99,9 @@ public:
   HLSWriter                 m_HLSWriter;                          ///< CAVLC encoder
   EncLoopFilterCccm         m_cEncLoopFilterCccm;
   CABACEncoder              m_CABACEncoder;
+#if HHI_GTT4X4
+  GttFlagStats              m_gttFlagStats;
+#endif
 
   EncReshape m_cReshaper;                        ///< reshaper class
 
@@ -261,7 +264,14 @@ public:
                                   m_encCfg.m_printSequenceMSE, m_encCfg.m_printMSSSIM, m_encCfg.m_printHexPsnr,
                                   (m_encCfg.m_resChangeInClvsEnabled || m_refLayerRescaledAvailable),
                                   m_spsMap.getFirstPS()->m_bitDepths, m_layerId);
+#if HHI_GTT4X4
+    printGtt4x4Stats();
+#endif
   }
+
+#if HHI_GTT4X4
+  void printGtt4x4Stats() const;
+#endif
 
   int  getLayerId() const { return m_layerId; }
   VPS *getVPS() { return m_vps; }

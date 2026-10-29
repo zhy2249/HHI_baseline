@@ -589,6 +589,9 @@ struct TransformUnit : public UnitArea
   uint8_t depth;
 
   std::array<MtsType, MAX_NUM_TBLOCKS> mtsIdx;
+#if HHI_GTT4X4
+  bool gttFlag = false;   // Luma only; derive the kernel path from the final levels.
+#endif
 
   bool                      noResidual;
   uint8_t                   jointCbCr;

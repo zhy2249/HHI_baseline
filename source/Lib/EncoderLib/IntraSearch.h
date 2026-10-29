@@ -540,7 +540,11 @@ protected:
   void xPredTuLuma(TransformUnit &tu, PelBuf &pred);
   void xPredTuChroma(TransformUnit &tu, PelBuf &predCb, PelBuf &predCr, IModeTrCandChroma &modeCand);
 
-  bool xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum);
+  bool xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum
+#if HHI_GTT4X4
+                             , const Gtt4x4QuantResult *gttResult = nullptr
+#endif
+                             );
   void xIntraCodingTUBlockChroma(TransformUnit &tu, const CompID compID, Distortion &dist, PreTrListChroma &ptList);
   bool xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &pm, PreTrListLuma &ptList, CUCtxIntra &cuCtxIntra);
   ChromaCbfs xRecurIntraCodingChromaQT(CodingStructure &cs, Partitioner &pm, IModeTrCandChroma &ptList);

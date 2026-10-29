@@ -1158,6 +1158,8 @@ bool EncAppCfg::parseCfg(int argc, char *argv[], EncCfg *encCfg)
   ("dQPFile,m",                                       encCfg->m_dQPFileName,                            "dQP file name")
   ("RDOQ",                                            encCfg->m_useRDOQ,                                "")
   ("RDOQTS",                                          encCfg->m_useRDOQTS,                              "")
+  ("GTT4x4",                                          encCfg->m_gtt4x4Enabled,                          "Enable experimental luma 4x4 grouped-tree transform (requires HHI_GTT4X4)")
+  ("GTT4x4Stats",                                     encCfg->m_gtt4x4Stats,                            "Report final context-coded GTT flag count and one fraction")
   ("SelectiveRDOQ",                                   encCfg->m_useSelectiveRDOQ,                       "Enable selective RDOQ")
 
   ;opts.addOptions()
@@ -3783,6 +3785,19 @@ bool EncAppCfg::xCheckParameter(EncCfg *encCfg)
   bool check_failed = false; /* abort if there is a fatal configuration problem */
 #define xConfirmPara(a, b) check_failed |= confirmPara(a, b)
 
+  if (encCfg->m_gtt4x4Enabled)
+  {
+    xConfirmPara(!HHI_GTT4X4, "GTT4x4 requested but this build has HHI_GTT4X4=0");
+    xConfirmPara(encCfg->m_DepQuantEnabledIdc != 1, "GTT4x4 requires DepQuant=1");
+    xConfirmPara(!encCfg->m_useRDOQ || !encCfg->m_useRDOQTS, "GTT4x4 requires RDOQ=1 and RDOQTS=1");
+    xConfirmPara(encCfg->m_SignDataHidingEnabledFlag, "GTT4x4 requires SignHideFlag=0");
+    xConfirmPara(encCfg->m_useScalingListId != SCALING_LIST_OFF, "GTT4x4 requires ScalingList=off");
+    xConfirmPara(encCfg->m_costMode != COST_STANDARD_LOSSY || encCfg->m_mixedLossyLossless,
+                 "GTT4x4 supports only standard lossy coding without MixedLossyLossless");
+    xConfirmPara(encCfg->m_internalBitDepth[ChannelType::LUMA] != 10 || encCfg->m_extendedPrecisionProcessingFlag,
+                 "GTT4x4 requires InternalBitDepth=10 and transform dynamic range 15");
+  }
+
   xConfirmPara(encCfg->m_alfapsIDShift < 0, "ALF APSs shift should be positive");
   xConfirmPara(encCfg->m_alfapsIDShift + encCfg->m_maxNumAlfAps > AlfParameters::ALF_CTB_MAX_NUM_APS,
                "The number of ALF APSs should not be more than ALF_CTB_MAX_NUM_APS");
@@ -5507,6 +5522,10 @@ const char *profileToString(const Profile::Name profile)
 
 void EncAppCfg::xPrintParameter(EncCfg *encCfg)
 {
+  msg(NOTICE, "EXPERIMENT: GTT4x4 compile=%d enabled=%d version=%d shape=4x4 component=Y DQ=%d "
+              "kernel=I,R45Q10 coeff=724 flag=context-1 signPred=local-off stats=%d\n",
+      HHI_GTT4X4, int(encCfg->m_gtt4x4Enabled), encCfg->m_gtt4x4Enabled ? 2 : 0,
+      encCfg->m_DepQuantEnabledIdc, int(encCfg->m_gtt4x4Stats));
   // msg( DETAILS, "\n" );
   msg(DETAILS, "Input          File                    : %s\n", encCfg->m_inputFileName.c_str());
   msg(DETAILS, "Bitstream      File                    : %s\n", encCfg->m_bitstreamFileName.c_str());

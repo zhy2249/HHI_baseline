@@ -1,0 +1,5 @@
+enabled,experiment,name,encoder,decoder,cfgs,sequence_cfg,input,qps,frames,extra_args,decode_md5,xlsm_tag
+1,gtt4x4_ctx_v2_ai,AI_HIGH_BasketballPass,,,cfg/encoder_intra_nx2High.cfg;cfg/experiments/gtt4x4_on.cfg,cfg/per-sequence/BasketballPass.cfg,,"22,27,32,37",8,,1,ai
+1,gtt4x4_ctx_v2_ra,RA_HIGH_BasketballPass,,,cfg/encoder_randomaccess_nx2High.cfg;cfg/experiments/gtt4x4_on.cfg,cfg/per-sequence/BasketballPass.cfg,,"22,27,32,37",8,,1,ra
+1,gtt4x4_ctx_v2_lb,LB_HIGH_BasketballPass,,,cfg/encoder_lowdelay_nx2High.cfg;cfg/experiments/gtt4x4_on.cfg,cfg/per-sequence/BasketballPass.cfg,,"22,27,32,37",8,,1,lb
+1,gtt4x4_ctx_v2_lp,LP_HIGH_BasketballPass,,,cfg/encoder_lowdelay_P_nx2High.cfg;cfg/experiments/gtt4x4_on.cfg,cfg/per-sequence/BasketballPass.cfg,,"22,27,32,37",8,,1,lb

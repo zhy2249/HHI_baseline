@@ -37,6 +37,10 @@
 
 #include "UnitTools.h"
 
+#if HHI_GTT4X4
+#include "Gtt4x4.h"
+#endif
+
 #include "dtrace_next.h"
 #include "dtrace_buffer.h"
 
@@ -10194,7 +10198,38 @@ void TU::setCbfAtDepth(TransformUnit &tu, const CompID &compID, const unsigned &
   tu.cbf[compID] &= ~(1 << depth);
   // then set the CBF
   tu.cbf[compID] |= ((cbf ? 1 : 0) << depth);
+#if HHI_GTT4X4
+  if (compID == COMP_Y && depth == tu.depth && !cbf)
+  {
+    tu.gttFlag = false;
+  }
+#endif
 }
+
+#if HHI_GTT4X4
+bool TU::isGttApplicable(const TransformUnit &tu, const CompID compID)
+{
+  // Only information available before the transform-index syntax is read here.
+  if (compID != COMP_Y || !tu.Y().valid() || tu.Y().width != 4 || tu.Y().height != 4 ||
+      !tu.cu || !tu.cs || !tu.cs->sps || !tu.cs->slice)
+  {
+    return false;
+  }
+  const SPS &sps = *tu.cs->sps;
+  const Slice &slice = *tu.cs->slice;
+  return sps.m_gtt4x4Enabled && sps.m_gtt4x4Version == GTT4X4_VERSION &&
+    (tu.cu->predMode == MODE_INTRA || tu.cu->predMode == MODE_INTER) &&
+    tu.cu->getBdpcmMode(COMP_Y) == BdpcmMode::NONE && !tu.cu->sbtInfo && !tu.noResidual &&
+    slice.m_depQuantEnabledIdc == 1 && !slice.m_signDataHidingEnabledFlag && !sps.m_scalingListEnabledFlag &&
+    sps.m_bitDepths[ChannelType::LUMA] == 10 && sps.getMaxLog2TrDynamicRange(ChannelType::LUMA) == 15 &&
+    !sps.m_spsRangeExtension.settingsDifferFromDefaults();
+}
+
+bool TU::isGttFlagPresent(const TransformUnit &tu, const CompID compID)
+{
+  return isGttApplicable(tu, compID) && getCbf(tu, COMP_Y) && tu.mtsIdx[COMP_Y] != MtsType::SKIP;
+}
+#endif
 
 bool TU::isTSAllowed(const TransformUnit &tu, const CompID &compID)
 {
@@ -10210,6 +10245,12 @@ bool TU::isTSAllowed(const TransformUnit &tu, const CompID &compID)
 
 bool TU::isMTSAllowed(const TransformUnit &tu, const CompID &compID)
 {
+#if HHI_GTT4X4
+  if (compID == COMP_Y && tu.gttFlag)
+  {
+    return false;
+  }
+#endif
   SizeType  tsMaxSize  = 1 << tu.cs->sps->m_log2MaxTransformSkipBlockSize;
   const int maxSize    = CU::isIntra(*tu.cu) ? MTS_INTRA_MAX_CU_SIZE : tu.cs->sps->m_interMTSMaxSize;
   const int cuWidth    = tu.cu->blocks[0].lumaSize().width;
@@ -10225,6 +10266,12 @@ bool TU::isMTSAllowed(const TransformUnit &tu, const CompID &compID)
 
 bool TU::lfnstAllowed(const TransformUnit &tu, const CompID &compID)
 {
+#if HHI_GTT4X4
+  if (compID == COMP_Y && tu.gttFlag)
+  {
+    return false;
+  }
+#endif
   const CodingUnit &cu       = *tu.cu;
   const Slice      &slice    = *cu.slice;
   const SPS        &sps      = *slice.m_sps;
@@ -10261,6 +10308,12 @@ bool TU::lfnstAllowed(const TransformUnit &tu, const CompID &compID)
 
 int TU::getNstIdx(const TransformUnit &tu, const CompID &compID)
 {
+#if HHI_GTT4X4
+  if (compID == COMP_Y && tu.gttFlag)
+  {
+    return 0;
+  }
+#endif
   if (tu.mtsIdx[compID] == MtsType::DCT2_NST1)
   {
     return 1;
@@ -10486,6 +10539,12 @@ Size TU::getSignPredArea(const TransformUnit &tu, const CompID compID)
 
 bool TU::getDelayedSignCoding(const TransformUnit &tu, const CompID compID)
 {
+#if HHI_GTT4X4
+  if (compID == COMP_Y && tu.gttFlag)
+  {
+    return false;
+  }
+#endif
   if (tu.cs->sps->m_numPredSign <= 0 || tu.mtsIdx[compID] == MtsType::SKIP ||
       tu.cu->getBdpcmMode(compID) != BdpcmMode::NONE)
   {
