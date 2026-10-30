@@ -3,10 +3,10 @@
 ## 实现身份
 
 - 基线：`5da139f22ffe9a281d8d9e4f0b7b4b22cba5326b`，NextSoftware2 fixed baseline。
-- 分支：`experiment/gtt-nx2high`，实现修订 `context-v2-r1`。分支名预留其他尺寸的 GTT 扩展；本文记录的已实现范围仍为 4×4。
+- 分支：`experiment/gtt-nx2high`，实现修订 `context-v2-r2`（运行默认值跟随编译宏）。分支名预留其他尺寸的 GTT 扩展；本文记录的已实现范围仍为 4×4。
 - 协议版本：**2**。原外部方案的版本 1 是旁路 flag 草案，本实现拒绝它；未同时实现旁路实验模式。
 - 本轮按用户明确要求实现专用 CABAC context，并统计最终实际写出 flag 中 1 的占比。
-- `TypeDef.h` 中 `HHI_GTT4X4` 默认 **0**；运行参数 `GTT4x4`、`GTT4x4Stats` 默认均为 0。
+- `TypeDef.h` 中 `HHI_GTT4X4` 默认 **0**；运行参数 `GTT4x4` 默认跟随该宏：宏 1 默认开启，宏 0 默认关闭。`GTT4x4Stats` 默认仍为 0。
 - 原外部方案、既有修复宏和 baseline manifest 保留。
 
 ## 实际算法与接线
@@ -58,7 +58,7 @@ GTT4x4_FLAG_STATS layer=0 total=200 ones=10 percent=5.000000%
 
 ## 构建和开启方式
 
-在独立实验 checkout/副本中，将 `source/Lib/CommonLib/TypeDef.h` 的 `HHI_GTT4X4` 显式改为 1，再构建。主工作区保持默认 0。CMake 选项只控制构建，不开启算法。
+在独立实验 checkout/副本中，将 `source/Lib/CommonLib/TypeDef.h` 的 `HHI_GTT4X4` 显式改为 1，再构建，即可默认启用 GTT，无需另加 `--GTT4x4=1`。主工作区保持默认 0。CMake 选项只控制构建，不决定算法默认值。
 
 ```bash
 cmake -S . -B build/gtt4x4-release \
@@ -72,7 +72,9 @@ ctest --test-dir build/gtt4x4-release --output-on-failure -R Gtt4x4
 
 宏 0 构建仍可运行 SPS/拒绝行为的语法测试；需算法开启的测试明确跳过，不冒充算法验证。
 
-编码时在原 nx2High 配置之后叠加 [gtt4x4_on.cfg](../../cfg/experiments/gtt4x4_on.cfg)，其中：
+宏 1 的二进制可在原 nx2High 配置之后使用 `--GTT4x4=0` 临时关闭，使用 `--GTT4x4=1` 显式开启。配置文件和命令行按读取顺序覆盖默认值，因此覆盖参数应放在 `-c` 配置之后。宏 0 仍不编译 GTT，显式请求开启会报错。
+
+需要输出最终占比时加 `--GTT4x4Stats=1`；也可叠加 [gtt4x4_on.cfg](../../cfg/experiments/gtt4x4_on.cfg)，显式开启工具与统计：
 
 ```ini
 GTT4x4       : 1
@@ -119,3 +121,9 @@ Debug 的 ASan/UBSan 四组测试也已通过，但采用了独立验证副本�
 Debug 配置使用 `-DCMAKE_BUILD_TYPE=Debug -DNX2_USE_ADDRESS_SANITIZER=ON -DNX2_ENABLE_X86_SIMD=OFF -DNX2_ENABLE_LINK_TIME_OPT=OFF -DGTT4X4_BUILD_TESTS=ON`。初始失败及最终结果均保存在本地验证日志目录。
 
 本地构建、测试和预览日志在 `runs/gtt4x4_validation/`。测试均使用合成对象，没有调用 EncoderApp/DecoderApp 编解码视频。未执行序列级关闭恢复、真实帧级 hash、真实素材下最终使用率、BD-rate 或性能测量；完整 CU 决策、缓存及工具组合仍需后续序列验收。合成 TU 往返不能替代这些验收。
+
+### 2026-10-30：宏控制运行默认值
+
+`context-v2-r2` 仅调整运行默认值与使用说明，协议仍为版本 2。宏 0/1 的 Release 编解码器重建成功；宏 1 四组测试通过，宏 0 语法测试通过、其余三组按约定跳过。
+
+另外使用临时独立程序调用真实 `EncAppCfg::parseCfg`，宏 0/1 各检查 10 种默认、显式开关、配置/命令行先后覆盖及独立统计设置，共 20/20 通过。16 个接受配置的实际身份行与最终值一致；宏 0 最终请求开启的 4 个案例明确拒绝。程序只构造配置对象和解析器，没有构造 EncApp/EncLib 或运行视频编解码。日志、案例参数和二进制指纹在 `runs/gtt4x4_macro_default_validation/`。

@@ -1158,7 +1158,7 @@ bool EncAppCfg::parseCfg(int argc, char *argv[], EncCfg *encCfg)
   ("dQPFile,m",                                       encCfg->m_dQPFileName,                            "dQP file name")
   ("RDOQ",                                            encCfg->m_useRDOQ,                                "")
   ("RDOQTS",                                          encCfg->m_useRDOQTS,                              "")
-  ("GTT4x4",                                          encCfg->m_gtt4x4Enabled,                          "Enable experimental luma 4x4 grouped-tree transform (requires HHI_GTT4X4)")
+  ("GTT4x4",                                          encCfg->m_gtt4x4Enabled,                          "Enable experimental luma 4x4 grouped-tree transform (default follows HHI_GTT4X4; 0 disables; enabling requires HHI_GTT4X4=1)")
   ("GTT4x4Stats",                                     encCfg->m_gtt4x4Stats,                            "Report final context-coded GTT flag count and one fraction")
   ("SelectiveRDOQ",                                   encCfg->m_useSelectiveRDOQ,                       "Enable selective RDOQ")
 
