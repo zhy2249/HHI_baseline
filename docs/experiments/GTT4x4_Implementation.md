@@ -3,10 +3,10 @@
 ## 实现身份
 
 - 基线：`5da139f22ffe9a281d8d9e4f0b7b4b22cba5326b`，NextSoftware2 fixed baseline。
-- 分支：`experiment/gtt-nx2high`，实现修订 `context-v2-r2`（运行默认值跟随编译宏）。分支名预留其他尺寸的 GTT 扩展；本文记录的已实现范围仍为 4×4。
+- 分支：`experiment/gtt-nx2high`，实现修订 `context-v2-r3`（功能和统计分别由宏设置运行默认值）。分支名预留其他尺寸的 GTT 扩展；本文记录的已实现范围仍为 4×4。
 - 协议版本：**2**。原外部方案的版本 1 是旁路 flag 草案，本实现拒绝它；未同时实现旁路实验模式。
 - 本轮按用户明确要求实现专用 CABAC context，并统计最终实际写出 flag 中 1 的占比。
-- `TypeDef.h` 中 `HHI_GTT4X4` 默认 **0**；运行参数 `GTT4x4` 默认跟随该宏：宏 1 默认开启，宏 0 默认关闭。`GTT4x4Stats` 默认仍为 0。
+- `TypeDef.h` 中 `HHI_GTT4X4`、紧随其后的 `HHI_GTT4X4_STATS` 默认均为 **0**。`GTT4x4` 和 `GTT4x4Stats` 分别跟随对应宏设置运行默认值，配置和命令行可覆盖。
 - 原外部方案、既有修复宏和 baseline manifest 保留。
 
 ## 实际算法与接线
@@ -54,7 +54,7 @@ GTT4x4_FLAG_STATS layer=0 total=200 ones=10 percent=5.000000%
 - `percent`：`100 × ones / total`。不是全部 TU 中 GTT 的占比。
 - 无出现位置时输出 `total=0 ones=0 percent=N/A`。
 
-身份行包含 `compile`、`enabled`、`flag=context-1` 和 `stats`，开启时 `version=2`，关闭时 `version=0`。计数只观察写出结果，不改变概率更新、模式选择或码流。
+身份行包含 `compile`、`enabled`、`flag=context-1`、`stats_default`（统计宏默认值）和 `stats`（覆盖后的运行值），开启时 `version=2`，关闭时 `version=0`。计数只观察写出结果，不改变概率更新、模式选择或码流。
 
 ## 构建和开启方式
 
@@ -74,7 +74,16 @@ ctest --test-dir build/gtt4x4-release --output-on-failure -R Gtt4x4
 
 宏 1 的二进制可在原 nx2High 配置之后使用 `--GTT4x4=0` 临时关闭，使用 `--GTT4x4=1` 显式开启。配置文件和命令行按读取顺序覆盖默认值，因此覆盖参数应放在 `-c` 配置之后。宏 0 仍不编译 GTT，显式请求开启会报错。
 
-需要输出最终占比时加 `--GTT4x4Stats=1`；也可叠加 [gtt4x4_on.cfg](../../cfg/experiments/gtt4x4_on.cfg)，显式开启工具与统计：
+统计开关独立设置：`HHI_GTT4X4_STATS=1` 默认输出最终占比，`=0` 默认不输出；命令行 `--GTT4x4Stats=0/1` 可双向覆盖。统计宏只决定默认值，不裁剪统计实现；统计实现仍随 `HHI_GTT4X4=1` 编译。工具宏为 0 时没有 GTT 统计实现或结束统计行。
+
+例如在源文件中设置如下即可默认启用工具及统计，统计宏紧跟开启宏：
+
+```cpp
+#define HHI_GTT4X4       1
+#define HHI_GTT4X4_STATS 1
+```
+
+也可叠加 [gtt4x4_on.cfg](../../cfg/experiments/gtt4x4_on.cfg)，显式开启工具与统计：
 
 ```ini
 GTT4x4       : 1
@@ -127,3 +136,11 @@ Debug 配置使用 `-DCMAKE_BUILD_TYPE=Debug -DNX2_USE_ADDRESS_SANITIZER=ON -DNX
 `context-v2-r2` 仅调整运行默认值与使用说明，协议仍为版本 2。宏 0/1 的 Release 编解码器重建成功；宏 1 四组测试通过，宏 0 语法测试通过、其余三组按约定跳过。
 
 另外使用临时独立程序调用真实 `EncAppCfg::parseCfg`，宏 0/1 各检查 10 种默认、显式开关、配置/命令行先后覆盖及独立统计设置，共 20/20 通过。16 个接受配置的实际身份行与最终值一致；宏 0 最终请求开启的 4 个案例明确拒绝。程序只构造配置对象和解析器，没有构造 EncApp/EncLib 或运行视频编解码。日志、案例参数和二进制指纹在 `runs/gtt4x4_macro_default_validation/`。
+
+### 2026-10-31：统计宏控制统计默认值
+
+`context-v2-r3` 新增紧接工具宏的 `HHI_GTT4X4_STATS`，仅控制统计运行默认值，命令行和配置均可覆盖为 0 或 1；计数位置、分母、码流语法及协议版本保持不变。身份行新增 `stats_default`，用于区分宏默认值和最终 `stats` 值。
+
+工具/统计宏组合 0/0、1/0、1/1 的 Release EncoderApp、DecoderApp 均构建成功。两种工具开启配置的四组测试均通过，工具关闭配置的语法测试通过、其余三组跳过。真实参数解析器的 27 个案例全部通过：26 个接受配置的身份日志符合预期，1 个工具未编译却请求启用的案例按预期拒绝；覆盖统计默认值、双向覆盖、配置读取顺序及工具运行关闭时统计参数的独立性。
+
+本次未运行视频编解码，参数验证不代表已测结束统计输出或真实使用率。日志、案例参数、源码副本及二进制指纹在 `runs/gtt4x4_stats_default_validation/`。

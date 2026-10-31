@@ -58,8 +58,12 @@
 
 // Experimental grouped-tree transform. Select explicitly in source, never through CMake.
 #define HHI_GTT4X4                                        0
+#define HHI_GTT4X4_STATS                                  0 // Runtime default; --GTT4x4Stats=0/1 overrides it.
 #if HHI_GTT4X4 != 0 && HHI_GTT4X4 != 1
 #error HHI_GTT4X4 must be 0 or 1
+#endif
+#if HHI_GTT4X4_STATS != 0 && HHI_GTT4X4_STATS != 1
+#error HHI_GTT4X4_STATS must be 0 or 1
 #endif
 
 

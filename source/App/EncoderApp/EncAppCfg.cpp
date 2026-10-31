@@ -1159,7 +1159,7 @@ bool EncAppCfg::parseCfg(int argc, char *argv[], EncCfg *encCfg)
   ("RDOQ",                                            encCfg->m_useRDOQ,                                "")
   ("RDOQTS",                                          encCfg->m_useRDOQTS,                              "")
   ("GTT4x4",                                          encCfg->m_gtt4x4Enabled,                          "Enable experimental luma 4x4 grouped-tree transform (default follows HHI_GTT4X4; 0 disables; enabling requires HHI_GTT4X4=1)")
-  ("GTT4x4Stats",                                     encCfg->m_gtt4x4Stats,                            "Report final context-coded GTT flag count and one fraction")
+  ("GTT4x4Stats",                                     encCfg->m_gtt4x4Stats,                            "Report final GTT flag count and one fraction (default follows HHI_GTT4X4_STATS; 0/1 overrides the default)")
   ("SelectiveRDOQ",                                   encCfg->m_useSelectiveRDOQ,                       "Enable selective RDOQ")
 
   ;opts.addOptions()
@@ -5523,9 +5523,9 @@ const char *profileToString(const Profile::Name profile)
 void EncAppCfg::xPrintParameter(EncCfg *encCfg)
 {
   msg(NOTICE, "EXPERIMENT: GTT4x4 compile=%d enabled=%d version=%d shape=4x4 component=Y DQ=%d "
-              "kernel=I,R45Q10 coeff=724 flag=context-1 signPred=local-off stats=%d\n",
+              "kernel=I,R45Q10 coeff=724 flag=context-1 signPred=local-off stats_default=%d stats=%d\n",
       HHI_GTT4X4, int(encCfg->m_gtt4x4Enabled), encCfg->m_gtt4x4Enabled ? 2 : 0,
-      encCfg->m_DepQuantEnabledIdc, int(encCfg->m_gtt4x4Stats));
+      encCfg->m_DepQuantEnabledIdc, HHI_GTT4X4_STATS, int(encCfg->m_gtt4x4Stats));
   // msg( DETAILS, "\n" );
   msg(DETAILS, "Input          File                    : %s\n", encCfg->m_inputFileName.c_str());
   msg(DETAILS, "Bitstream      File                    : %s\n", encCfg->m_bitstreamFileName.c_str());
