@@ -10,4 +10,5 @@
 - 项目文档放 `docs/experiments/`，外部输入放 `docs/external_inputs/`，结果收件放 `experiments/`，本地运行输出放 `runs/`。外部原文保留，不当作已核验事实。
 - 后续正式实验先登记自己的 Current anchor 身份、配置、序列、QP、帧数与采样规则。旧项目工作簿只能在可比性确认后引用；不自动补点。
 - 结果登记保存每序列每 QP 码率与 Y/U/V PSNR；先分别计算分量 BD-rate，再以 6:1:1 加权。序列均值与类别均值分开标记；其他指标须另行约定。
+- 维护 `docs/experiments/Experiment_Results.md`（实验身份、原始结果、BD-rate）和 `docs/experiments/Experiment_Analysis.md`（对结果的分析），两者分开并上传 Git。当前 4×4 GTT 为实验 1。各实验表格和 CSV 放 `experiments/experiment_<三位编号>_<名称>/`，默认不上传；复制 `results.xlsm` 模板到实验目录后，按序列、QP、配置匹配 CSV 与 Test 行，保留 Reference 和 VBA，缺点留空并清除旧计算缓存，后续实验沿用此流程。
 - 保留用户变更。Git 上传只按当次授权执行，不自动上传原始视频、码流、工作簿、重建、大日志、构建产物和私密配置；不强推、不改写历史。
