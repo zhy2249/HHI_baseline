@@ -42,8 +42,8 @@
 #include "Unit.h"
 #include "UnitPartitioner.h"
 #include "QuantRDOQ.h"
-#if HHI_GTT4X4
-#include "Gtt4x4.h"
+#if HHI_GTT_COMMON
+#include "Gtt.h"
 #endif
 
 class DepQuant : public QuantRDOQ
@@ -55,9 +55,11 @@ public:
   virtual void quant(TransformUnit &tu, const CompID &compID, const CCoeffBuf &pSrc, TCoeff &absSum, const QpParam &cQP,
                      const Ctx &ctx);
   virtual void dequant(const TransformUnit &tu, CoeffBuf &dstCoeff, const CompID &compID, const QpParam &cQP);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   bool quantGtt4x4(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &srcCoeff, const QpParam &cQP,
                    const Ctx &ctx, const Gtt4x4Constraints &constraints, Gtt4x4QuantResult &result);
+  bool quantGtt(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &srcCoeff, const QpParam &cQP,
+                const Ctx &ctx, const GttLayout &layout, const GttConstraints &constraints, GttQuantResult &result);
 #endif
 
 private:

@@ -291,8 +291,10 @@ struct SPS
   bool                 m_temporalIdNestingFlag { false };   // temporal_id_nesting_flag
   bool                 m_scalingListEnabledFlag { false };
   bool                 m_depQuantEnabledFlag { false };   // dependent quantization enabled flag
-  bool                 m_gtt4x4Enabled { false };
-  uint8_t              m_gtt4x4Version { 0 };
+  bool                 m_gttEnabled { false };
+  uint8_t              m_gttVersion { 0 };
+  uint8_t              m_gttSizeMask { 0 };
+  uint8_t              m_gttGroupMode { 0 };
   bool                 m_signDataHidingEnabledFlag { false };   // sign data hiding enabled flag
   int                  m_numPredSign { 0 };   // Number of predicted transform coefficient signs
   int                  m_log2SignPredArea { 0 };   // Log2 of width/height of area for sign prediction
@@ -455,17 +457,28 @@ struct SPS
   }
 
   // Kept in unsupported builds as well, so an experimental stream is never silently accepted.
-  void validateGtt4x4() const
+  void validateGtt() const
   {
-    if (!m_gtt4x4Enabled)
+    if (!m_gttEnabled)
     {
-      CHECK(m_gtt4x4Version != 0, "Disabled GTT4x4 SPS must have version zero");
+      CHECK(m_gttVersion != 0 || m_gttSizeMask != 0 || m_gttGroupMode != 0,
+            "Disabled GTT SPS must have zero version, mask and group mode");
       return;
     }
-#if !HHI_GTT4X4
-    THROW("This build does not support GTT4x4 bitstreams");
+#if !HHI_GTT_COMMON
+    THROW("This build does not support GTT bitstreams");
 #else
-    CHECK(m_gtt4x4Version != 2, "Unsupported GTT4x4 version (expected context-coded version 2)");
+    CHECK(m_gttVersion != 2 && m_gttVersion != 3, "Unsupported GTT protocol version");
+    CHECK(!m_gttSizeMask || (m_gttSizeMask & 0xf0), "Invalid GTT size mask");
+    CHECK(m_gttGroupMode > 1 || (m_gttGroupMode == 1 && (m_gttSizeMask & 1)),
+          "Invalid GTT group mode or unsupported 4x4 first-CG grouping");
+    CHECK(m_gttVersion == 2 && (m_gttSizeMask != 1 || m_gttGroupMode != 0),
+          "GTT v2 requires 4x4 equal grouping");
+    for (unsigned sizeId = 0; sizeId < 4; ++sizeId)
+    {
+      CHECK((m_gttSizeMask & (1 << sizeId)) && 2U + sizeId > m_log2MaxTbSize,
+            "GTT size exceeds the SPS maximum transform size");
+    }
     CHECK(m_bitDepths[ChannelType::LUMA] != 10 || getMaxLog2TrDynamicRange(ChannelType::LUMA) != 15,
           "GTT4x4 requires 10-bit luma and transform dynamic range 15");
     CHECK(m_scalingListEnabledFlag, "GTT4x4 does not support scaling lists");
@@ -473,6 +486,8 @@ struct SPS
     CHECK(m_spsRangeExtension.settingsDifferFromDefaults(), "GTT4x4 requires default range-extension settings");
 #endif
   }
+
+  void validateGtt4x4() const { validateGtt(); }
 
   void setChromaQpMappingTableFromParams(const ChromaQpMappingTableParams &params, const int qpBdOffset)
   {

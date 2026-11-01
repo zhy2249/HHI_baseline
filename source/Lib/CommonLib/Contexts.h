@@ -497,8 +497,9 @@ public:
   static const CtxSet nnlfUnifiedParams;
 #endif
   static const CtxSet   LfCccmFlag;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   static const CtxSet   GttFlag;
+  static const CtxSet   GttFlagBySize;
 #endif
   static const unsigned NumberOfContexts;
 

@@ -45,6 +45,9 @@
 #include "CommonLib/AlfParametersVtm.h"
 
 #include "CommonLib/UnitTools.h"
+#if HHI_GTT_COMMON
+#include "CommonLib/Gtt.h"
+#endif
 #include "CommonLib/dtrace_buffer.h"
 
 #include <map>
@@ -227,6 +230,16 @@ void CABACWriter::coding_tree_unit(CodingStructure &cs, const UnitArea &area, En
   QTBTPartitioner partitioner;
 
   partitioner.initCtu(area, ChannelType::LUMA, cs);
+
+#if HHI_GTT_COMMON
+  if (m_gttFlagStats && isEncoding() && cs.sps->m_gttVersion == 3)
+  {
+    // The final Writer visits each CTU once; use the coded picture grid (PPS), including input padding.
+    const int width = std::max(0, std::min(int(area.Y().width), int(cs.pps->m_picWidthInLumaSamples) - area.Y().x));
+    const int height = std::max(0, std::min(int(area.Y().height), int(cs.pps->m_picHeightInLumaSamples) - area.Y().y));
+    m_gttFlagStats->lumaSamples += uint64_t(width) * height;
+  }
+#endif
 
 #if ENABLE_NNLF
   if (!skipNnlf && cs.sps->m_nnlf && !cs.picHeader->m_nnlfDisabled && ctuRsAddr == 0)
@@ -792,6 +805,9 @@ void CABACWriter::split_cu_mode(const PartSplit split, const CodingStructure &cs
 
 void CABACWriter::coding_unit(const CodingUnit &cu, Partitioner &partitioner, CUCtx &cuCtx)
 {
+#if HHI_GTT_COMMON
+  collectGttTuStats(cu);
+#endif
   DTRACE(g_trace_ctx, D_SYNTAX, "coding_unit() %dx%d @ (%d,%d)\n", cu.blocks[int(cu.chType)].width,
          cu.blocks[int(cu.chType)].height, cu.blocks[int(cu.chType)].x, cu.blocks[int(cu.chType)].y);
   CodingStructure &cs = *cu.cs;
@@ -3258,7 +3274,7 @@ void CABACWriter::transform_unit_last(const TransformUnit &tu, CUCtx &cuCtx, Par
   bool cbf[3]    = { TU::getCbf(tu, COMP_Y), chromaCbfs.Cb, chromaCbfs.Cr };
   bool cbfLuma   = (cbf[COMP_Y] != 0);
   bool cbfChroma = false;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   CHECK(tu.Y().valid() && !cbfLuma && tu.gttFlag, "Zero-CBF luma cannot retain GTT4x4 mode");
 #endif
 
@@ -3432,7 +3448,28 @@ void CABACWriter::joint_cb_cr(const TransformUnit &tu, const int cbfMask)
   }
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
+void CABACWriter::collectGttTuStats(const CodingUnit &cu)
+{
+  // Collect the committed TU population before skip, palette and root-CBF early returns.
+  if (!m_gttFlagStats || !isEncoding() || cu.chType != ChannelType::LUMA || !cu.Y().valid() ||
+      !cu.firstTU || cu.cs->sps->m_gttVersion != 3)
+  {
+    return;
+  }
+  for (const TransformUnit &tu: CU::traverseTUs(cu))
+  {
+    const int sizeId = TU::gttSizeId(tu);
+    if (sizeId < 0)
+    {
+      continue;
+    }
+    auto &stats = m_gttFlagStats->bySize[sizeId];
+    ++stats.tuCount;
+    stats.eligibleCount += TU::isGttApplicable(tu, COMP_Y) ? 1 : 0;
+  }
+}
+
 void CABACWriter::gtt_flag(const TransformUnit &tu, CompID compID)
 {
   if (compID != COMP_Y)
@@ -3445,11 +3482,42 @@ void CABACWriter::gtt_flag(const TransformUnit &tu, CompID compID)
     return;
   }
   CHECK(tu.gttFlag && tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2, "GTT4x4 requires DCT2 placeholder");
-  m_binEncoder.encodeBin(tu.gttFlag, Ctx::GttFlag());
-  if (m_gttFlagStats && isEncoding())
+  const unsigned ctxId = TU::gttFlagCtxId(tu);
+  const bool record = m_gttFlagStats && isEncoding();
+  const unsigned flag = tu.gttFlag ? 1 : 0;
+  const uint32_t fracBits = record ? getCtx().getFracBitsAcess().getFracBitsArray(ctxId).intBits[flag] : 0;
+  m_binEncoder.encodeBin(flag, ctxId);
+  if (record)
   {
     ++m_gttFlagStats->total;
-    m_gttFlagStats->ones += tu.gttFlag ? 1 : 0;
+    m_gttFlagStats->ones += flag;
+    auto &stats = m_gttFlagStats->bySize[TU::gttSizeId(tu)];
+    ++stats.total;
+    stats.ones += flag;
+    stats.fracBits[flag] += fracBits;
+    if (flag && tu.cs->sps->m_gttVersion == 3)
+    {
+      const auto layout = getGttLayout(tu);
+      const auto levels = tu.getCoeffs(COMP_Y);
+      const int last = tu.lastPos[COMP_Y];
+      CHECK(last < 0 || last >= layout.numCoeff || !levels.buf, "Invalid final GTT coefficients for statistics");
+      int tau = 0;
+      while (last >= layout.groupEnd[tau]) { ++tau; }
+      const auto path = deriveGttPath(levels, layout);
+      const int k2 = tau >= 1 ? path.k2 : 0;
+      const int k3 = tau >= 2 ? path.k3 : 0;
+      ++stats.tau[tau];
+      ++stats.paths[2 * k2 + k3];
+      stats.prefixRTus += k2 || k3 ? 1 : 0;
+      ++stats.lastPositions[last];
+      for (int y = 0; y < layout.height; ++y)
+      {
+        for (int x = 0; x < layout.width; ++x)
+        {
+          stats.nonzeroLevels += levels.at(x, y) != 0 ? 1 : 0;
+        }
+      }
+    }
   }
   DTRACE(g_trace_ctx, D_SYNTAX, "gtt_flag() pos=(%d,%d) flag=%d\n", tu.Y().x, tu.Y().y, int(tu.gttFlag));
 }
@@ -3469,7 +3537,7 @@ void CABACWriter::residual_coding_last(const TransformUnit &tu, CompID compID, C
 
   ts_flag(tu, compID);
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   gtt_flag(tu, compID);
   const bool updateLegacyConstraints = compID != COMP_Y || !tu.gttFlag;
 #else

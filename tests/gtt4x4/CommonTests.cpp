@@ -11,7 +11,7 @@
 #include <memory>
 #include <stdexcept>
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 
 namespace
 {
@@ -133,8 +133,9 @@ struct Fixture
     sps.m_chromaFormatIdc = ChromaFormat::_444;
     sps.m_bitDepths[ChannelType::LUMA] = sps.m_bitDepths[ChannelType::CHROMA] = 10;
     sps.m_qpBDOffset[ChannelType::LUMA] = sps.m_qpBDOffset[ChannelType::CHROMA] = 12;
-    sps.m_gtt4x4Enabled = true;
-    sps.m_gtt4x4Version = GTT4X4_VERSION;
+    sps.m_gttEnabled = true;
+    sps.m_gttVersion = GTT4X4_VERSION;
+    sps.m_gttSizeMask = 1;
     sps.m_depQuantEnabledFlag = true;
     sps.m_numPredSign = 4;
     sps.m_ctuSize = 64;
@@ -324,9 +325,9 @@ void testLifecycleAndEligibility(Fixture &fixture)
   fixture.slice.m_depQuantEnabledIdc = 2;
   require(!TU::isGttApplicable(tu, COMP_Y), "DQ2 is eligible");
   fixture.slice.m_depQuantEnabledIdc = 1;
-  fixture.sps.m_gtt4x4Version = 1;
+  fixture.sps.m_gttVersion = 1;
   require(!TU::isGttApplicable(tu, COMP_Y), "Obsolete EP syntax version is eligible");
-  fixture.sps.m_gtt4x4Version = GTT4X4_VERSION;
+  fixture.sps.m_gttVersion = GTT4X4_VERSION;
   fixture.sps.m_spsRangeExtension.m_rrcRiceExtensionEnableFlag = true;
   require(!TU::isGttApplicable(tu, COMP_Y), "Unsupported synthetic REXT TU is eligible");
   fixture.sps.m_spsRangeExtension.m_rrcRiceExtensionEnableFlag = false;

@@ -4063,7 +4063,7 @@ bool EncCu::xEncodeInterResidual(CodingStructure *&tempCS, CodingStructure *&bes
   Distortion curPuSse    = m_pcInterSearch->getEstDistSbt(NUMBER_SBT_MODE);
   uint8_t    currBestSbt = 0;
   auto       currBestTrs = MtsType::NONE;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   bool       currBestUsesGtt = false;
 #endif
   uint8_t    histBestSbt = MAX_UCHAR;
@@ -4129,7 +4129,7 @@ bool EncCu::xEncodeInterResidual(CodingStructure *&tempCS, CodingStructure *&bes
       sbtOffRootCbf = pcu->rootCbf;
       currBestSbt   = CU::getSbtInfo(pcu->firstTU->mtsIdx[COMP_Y] > MtsType::SKIP ? SBT_OFF_MTS : SBT_OFF_DCT, 0);
       currBestTrs   = pcu->firstTU->mtsIdx[COMP_Y];
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
       currBestUsesGtt = false;
       for (const auto *candidateTU : tempCS->tus)
       {
@@ -4266,7 +4266,7 @@ bool EncCu::xEncodeInterResidual(CodingStructure *&tempCS, CodingStructure *&bes
         currBestTrs = tempCS->tus[pcu->getSbtTuIdx()]->mtsIdx[COMP_Y];
         assert(!isMTS(currBestTrs));
         currBestCost = tempCS->cost;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
         currBestUsesGtt = false; // SBT and GTT are mutually exclusive.
 #endif
       }
@@ -4282,7 +4282,7 @@ bool EncCu::xEncodeInterResidual(CodingStructure *&tempCS, CodingStructure *&bes
   }   // end emt loop
 
   if (histBestSbt == MAX_UCHAR && doPreAnalyzeResi && numRDOTried > 1
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
       && !currBestUsesGtt
 #endif
       )

@@ -3,7 +3,7 @@
 
 #include "CommonDef.h"
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 #include "Unit.h"
 #include "Buffer.h"
 #include <array>

@@ -7599,30 +7599,33 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
       }
 
       bool trTested = false;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
       const bool tryGtt = compID == COMP_Y && TU::isGttApplicable(tu, compID) && !slice.m_isLossless;
-      std::vector<Gtt4x4QuantResult> gttCandidates;
+      std::vector<GttQuantResult> gttCandidates;
+      auto *gttStats = tryGtt ? getGttSearchSizeStats(m_gttSearchStats, tu.Y().width) : nullptr;
+      double gttLegacyCost = MAX_DOUBLE, bestGttCost = MAX_DOUBLE;
       if (compID == COMP_Y) { tu.gttFlag = false; }
 #endif
       auto dctCost  = xPreCalcTrans(tu, compID, tl);
       for (int trGroup = 0; trGroup <
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
            (tryGtt ? 3 : 2)
 #else
            2
 #endif
            ; trGroup++)
       {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
         const bool isGttTest = trGroup == 2;
         if (isGttTest)
         {
+          gttLegacyCost = minCost[compID];
           tu.gttFlag = true;
           tu.mtsIdx[COMP_Y] = MtsType::DCT2_DCT2;
 #if RDOQ_CHROMA_LAMBDA
           m_pcTrQuant->selectLambda(COMP_Y);
 #endif
-          gttCandidates = generateGtt4x4Candidates(*m_pcTrQuant, tu, csFull->getOrgResiBuf(compArea), ctxStart);
+          gttCandidates = generateGttCandidates(*m_pcTrQuant, tu, csFull->getOrgResiBuf(compArea), ctxStart, m_gttSearchStats);
         }
 #endif
         if (trGroup == 1)
@@ -7630,7 +7633,7 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
           if (!TU::getCbfAtDepth(bestTU, compID, currDepth) ||
               (m_encCfg->m_useTransformSkipFast && bestTU.mtsIdx[compID] == MtsType::SKIP))
           {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
             if (tryGtt) { continue; }
 #endif
             break;
@@ -7638,27 +7641,27 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
           xPreCalcTransUpd(tu, compID, tl, dctCost);
         }
         const size_t candidateCount =
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
           isGttTest ? gttCandidates.size() :
 #endif
           tl.trTypes.size();
         for (size_t candidateIdx = 0; candidateIdx < candidateCount; ++candidateIdx)
         {
           const MtsType tr =
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
             isGttTest ? MtsType::DCT2_DCT2 :
 #endif
             tl.trTypes[candidateIdx];
           const bool isFirstTr = (!trGroup && tr == tl.trTypes.front());
           if (
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
               !isGttTest &&
 #endif
               trTested && tr != MtsType::SKIP && !TU::getCbfAtDepth(bestTU, compID, currDepth))
           {
             continue;
           }
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
           if (compID == COMP_Y) { tu.gttFlag = isGttTest; }
 #endif
           tu.mtsIdx[compID] = tr;
@@ -7682,11 +7685,11 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
           //----- quantization -----
           m_CABACEstimator->getCtx() = ctxStart;
           TCoeff currAbsSum          = 0;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
           if (isGttTest)
           {
-            installGtt4x4Candidate(tu, gttCandidates[candidateIdx]);
-            currAbsSum = gttCandidates[candidateIdx].absSum;
+            installGttCandidate(tu, gttCandidates[candidateIdx]);
+            currAbsSum = TCoeff(gttCandidates[candidateIdx].absSum); // checked on installation
           }
           else
 #endif
@@ -7695,6 +7698,10 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
           }
 
           //----- calculate rd-costs -----
+#if HHI_GTT_COMMON
+          GttSearchTimer gttTimer(isGttTest && gttStats ? &gttStats->scoreNs : nullptr);
+          if (isGttTest && gttStats) { ++gttStats->scoredCandidates; }
+#endif
           m_CABACEstimator->resetBits();
           uint64_t   currCompFracBits = 0;
           Distortion currCompDist     = 0;
@@ -7866,6 +7873,9 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
           }
 
           //----- compare costs -----
+#if HHI_GTT_COMMON
+          if (isGttTest && currAbsSum != 0) { bestGttCost = std::min(bestGttCost, currCompCost); }
+#endif
           if (currCompCost < minCost[compID])
           {
             // copy component
@@ -7893,6 +7903,9 @@ void InterSearch::xEstimateInterResidualQT(CodingStructure &cs, Partitioner &par
         }
       }
 
+#if HHI_GTT_COMMON
+      if (tryGtt) { recordGttSearchOutcome(gttStats, bestGttCost, gttLegacyCost); }
+#endif
       // copy component
       tu.copyComponentFrom(bestTU, compID);
       csFull->getResiBuf(compArea).copyFrom(saveCS.getResiBuf(compArea));

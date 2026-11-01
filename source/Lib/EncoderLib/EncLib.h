@@ -54,6 +54,9 @@
 #include "CABACWriter.h"
 #include "InterSearch.h"
 #include "IntraSearch.h"
+#if HHI_GTT_COMMON
+#include "GttSearch.h"
+#endif
 #include "EncSampleAdaptiveOffset.h"
 #include "EncReshape.h"
 #include "EncAdaptiveLoopFilter.h"
@@ -99,8 +102,9 @@ public:
   HLSWriter                 m_HLSWriter;                          ///< CAVLC encoder
   EncLoopFilterCccm         m_cEncLoopFilterCccm;
   CABACEncoder              m_CABACEncoder;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   GttFlagStats              m_gttFlagStats;
+  GttSearchStats            m_gttSearchStats;
 #endif
 
   EncReshape m_cReshaper;                        ///< reshaper class
@@ -264,12 +268,12 @@ public:
                                   m_encCfg.m_printSequenceMSE, m_encCfg.m_printMSSSIM, m_encCfg.m_printHexPsnr,
                                   (m_encCfg.m_resChangeInClvsEnabled || m_refLayerRescaledAvailable),
                                   m_spsMap.getFirstPS()->m_bitDepths, m_layerId);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
     printGtt4x4Stats();
 #endif
   }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   void printGtt4x4Stats() const;
 #endif
 

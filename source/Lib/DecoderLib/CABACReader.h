@@ -184,7 +184,7 @@ public:
   void residual_coding_coef(TransformUnit &tu, CompID compID, CUCtx &cuCtx);
   void residual_coding_sign(TransformUnit &tu, CompID compID);
   void ts_flag(TransformUnit &tu, CompID compID);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   void gtt_flag(TransformUnit &tu, CompID compID);
 #endif
   void nst_idx(TransformUnit &tu, CUCtx &cuCtx);

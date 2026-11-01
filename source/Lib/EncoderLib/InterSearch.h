@@ -40,6 +40,7 @@
 
 // Include files
 #include "CABACWriter.h"
+#include "GttSearch.h"
 
 #include "CommonLib/MotionInfo.h"
 #include "CommonLib/InterPrediction.h"
@@ -407,6 +408,9 @@ private:
 
 protected:
   // interface to option
+#if HHI_GTT_COMMON
+  GttSearchStats *m_gttSearchStats = nullptr;
+#endif
   const EncCfg    *m_encCfg;
   BilateralFilter *m_bilateralFilter;
   EncModeCtrl     *m_modeCtrl;
@@ -466,6 +470,9 @@ public:
             InterpolationFilter *pcInterpolationFilter);
 
   void destroy();
+#if HHI_GTT_COMMON
+  void setGttSearchStats(GttSearchStats *stats) { m_gttSearchStats = stats; }
+#endif
 
   void    calcMinDistSbt(CodingStructure &cs, const CodingUnit &cu, const uint8_t sbtAllowed);
   uint8_t skipSbtByRDCost(int width, int height, int mtDepth, uint8_t sbtIdx, uint8_t sbtPos, double bestCost,

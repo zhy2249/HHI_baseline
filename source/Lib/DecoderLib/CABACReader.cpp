@@ -3699,7 +3699,7 @@ void CABACReader::transform_unit_last(TransformUnit &tu, CUCtx &cuCtx, Partition
   bool lumaOnly  = !isChromaEnabled(cu.chromaFormat) || !tu.blocks[COMP_Cb].valid();
   bool cbfLuma   = (tu.cbf[COMP_Y] != 0);
   bool cbfChroma = (lumaOnly ? false : (chromaCbfs.Cb || chromaCbfs.Cr));
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (tu.Y().valid() && !cbfLuma)
   {
     tu.gttFlag = false;
@@ -3870,14 +3870,14 @@ void CABACReader::joint_cb_cr(TransformUnit &tu, const int cbfMask)
   }
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 void CABACReader::gtt_flag(TransformUnit &tu, CompID compID)
 {
   if (compID != COMP_Y)
   {
     return;
   }
-  tu.gttFlag = TU::isGttFlagPresent(tu, compID) ? bool(m_binDecoder.decodeBin(Ctx::GttFlag())) : false;
+  tu.gttFlag = TU::isGttFlagPresent(tu, compID) ? bool(m_binDecoder.decodeBin(TU::gttFlagCtxId(tu))) : false;
   CHECK(tu.gttFlag && tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2, "GTT4x4 requires DCT2 placeholder");
   DTRACE(g_trace_ctx, D_SYNTAX, "gtt_flag() pos=(%d,%d) flag=%d\n", tu.Y().x, tu.Y().y, int(tu.gttFlag));
 }
@@ -3897,7 +3897,7 @@ void CABACReader::residual_coding_last(TransformUnit &tu, CompID compID, CUCtx &
 
   ts_flag(tu, compID);
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   gtt_flag(tu, compID);
   const bool updateLegacyConstraints = compID != COMP_Y || !tu.gttFlag;
 #else
@@ -3994,7 +3994,7 @@ void CABACReader::residual_coding_coef(TransformUnit &tu, CompID compID, CUCtx &
   }
   tu.numPredAreaSigns[compID] = cctx.numSignsPredArea();
   if (isLuma(compID) && tu.mtsIdx[compID] != MtsType::SKIP
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
       && !tu.gttFlag
 #endif
   )
@@ -4458,7 +4458,9 @@ void CABACReader::residual_coding_subblock(CoeffCodingContext &cctx, TCoeff *coe
                                                       cctx.compID());
   const unsigned numSigns    = (cctx.hideSign(firstNZPos, lastNZPos) ? numNonZero - 1 : numNonZero);
   const bool     signPred    = cctx.isSignPredCG();
-  unsigned       signPattern = (signPred ? 0 : m_binDecoder.decodeBinsEP(numSigns) << (32 - numSigns));
+  // An inferred first CG may contain no nonzero levels. Zero signs consume
+  // no bins; avoid shifting a 32-bit value by 32 in that legal case.
+  unsigned       signPattern = (signPred || numSigns == 0 ? 0 : m_binDecoder.decodeBinsEP(numSigns) << (32 - numSigns));
 
   //===== set final coefficents =====
   TCoeff sumAbs = 0;

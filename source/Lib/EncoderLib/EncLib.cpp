@@ -42,10 +42,12 @@
 
 #include "CommonLib/Picture.h"
 #include "CommonLib/CommonDef.h"
+#include "CommonLib/Gtt.h"
 #include "CommonLib/ChromaFormat.h"
 #include "EncLibCommon.h"
 #include "CommonLib/ProfileTierLevel.h"
 #include "CommonLib/TimeProfiler.h"
+#include <cstdio>
 
 //! \ingroup EncoderLib
 //! \{
@@ -612,9 +614,11 @@ void EncLib::init(AUWriterIf *auWriterIf)
   xInitPicHeader(m_picHeader, sps0, pps0);
 
   // initialize processing unit classes
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   m_gttFlagStats = {};
-  m_CABACEncoder.getCABACWriter(&sps0)->setGttFlagStats(m_encCfg.m_gtt4x4Stats ? &m_gttFlagStats : nullptr);
+  m_gttSearchStats = {};
+  const bool gttStats = m_encCfg.m_gttExperiment != 0 ? m_encCfg.m_gttStats : m_encCfg.m_gtt4x4Stats;
+  m_CABACEncoder.getCABACWriter(&sps0)->setGttFlagStats(gttStats ? &m_gttFlagStats : nullptr);
 #endif
   m_cEncModeCtrl.init(&m_encCfg, &m_cRateCtrl, &m_cRdCost, &m_adaptQPmap);
   m_cGOPEncoder.init(this, &m_cEncModeCtrl);
@@ -640,6 +644,11 @@ void EncLib::init(AUWriterIf *auWriterIf)
 
   // link temporary buffets from intra search with inter search to avoid unneccessary memory overhead
   m_cInterSearch.setTempBuffers(m_cIntraSearch.getSaveCSBuf());
+#if HHI_GTT_COMMON
+  auto *gttSearchStats = m_encCfg.m_gttExperiment != 0 && m_encCfg.m_gttStats ? &m_gttSearchStats : nullptr;
+  m_cIntraSearch.setGttSearchStats(gttSearchStats);
+  m_cInterSearch.setGttSearchStats(gttSearchStats);
+#endif
 
 #if ER_CHROMA_QP_WCG_PPS
   if (m_encCfg.m_wcgChromaQpControl.enabled)
@@ -1990,14 +1999,72 @@ void EncLib::xInitSPS(SPS &sps)
   sps.m_licEnabledFlag               = m_encCfg.m_licMode != 0;
   sps.m_biLicEnabledFlag             = m_encCfg.m_licMode == 2;
   sps.m_useInterRPL                  = m_encCfg.m_interRPL;
-  sps.m_gtt4x4Enabled                = m_encCfg.m_gtt4x4Enabled;
-  sps.m_gtt4x4Version                = m_encCfg.m_gtt4x4Enabled ? 2 : 0;
-  sps.validateGtt4x4();
+  CHECK(m_encCfg.m_gtt4x4Enabled && m_encCfg.m_gttExperiment, "GTT encoder entries are mutually exclusive");
+  CHECK(m_encCfg.m_gtt4x4Enabled && !HHI_GTT4X4, "GTT4x4 encoder capability is not compiled");
+  CHECK(m_encCfg.m_gttExperiment && HHI_GTT == 0, "GTT experiment-2 encoder capability is not compiled");
+  const auto &gttMode = getGttMode(m_encCfg.m_gttExperiment);
+  sps.m_gttEnabled = m_encCfg.m_gtt4x4Enabled || m_encCfg.m_gttExperiment != 0;
+  sps.m_gttVersion = m_encCfg.m_gtt4x4Enabled ? 2 : m_encCfg.m_gttExperiment ? 3 : 0;
+  sps.m_gttSizeMask = m_encCfg.m_gtt4x4Enabled ? 1 : gttMode.sizeMask;
+  sps.m_gttGroupMode = gttMode.groupMode;
+  sps.validateGtt();
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 void EncLib::printGtt4x4Stats() const
 {
+  if (m_encCfg.m_gttExperiment != 0)
+  {
+    if (!m_encCfg.m_gttStats)
+    {
+      return;
+    }
+    const auto count = [](uint64_t value) { return static_cast<unsigned long long>(value); };
+    const auto &mode = getGttMode(m_encCfg.m_gttExperiment);
+    msg(NOTICE, "GTT_STATS_IDENTITY experiment=2 sub=%d layer=%d base_qp=%d gop=%d intra_period=%d "
+                "version=3 mask=0x%02x groupMode=%d area_grid=pps-coded-luma\n",
+        m_encCfg.m_gttExperiment, m_layerId, m_encCfg.m_iQP, m_encCfg.m_gopSize, m_encCfg.m_intraPeriod,
+        unsigned(mode.sizeMask), unsigned(mode.groupMode));
+    for (int sizeId = 0; sizeId < 4; ++sizeId)
+    {
+      const auto &s = m_gttFlagStats.bySize[sizeId];
+      const int size = 4 << sizeId;
+      const uint64_t area = uint64_t(size) * size;
+      char percent[40] = "N/A";
+      if (s.total)
+      {
+        std::snprintf(percent, sizeof(percent), "%.6f%%", 100.0 * double(s.ones) / double(s.total));
+      }
+      msg(NOTICE, "GTT_FLAG_STATS experiment=2 sub=%d layer=%d size=%d total=%llu zeros=%llu ones=%llu "
+                  "percent=%s estimated_bits0=%.6f estimated_bits1=%.6f luma_samples=%llu tu_count=%llu "
+                  "eligible_count=%llu eligible_area=%llu flag_area=%llu gtt_area=%llu "
+                  "prefix_r_tus=%llu prefix_r_area=%llu nonzero_levels=%llu\n",
+          m_encCfg.m_gttExperiment, m_layerId, size, count(s.total), count(s.total - s.ones), count(s.ones),
+          percent, double(s.fracBits[0]) / (1 << SCALE_BITS), double(s.fracBits[1]) / (1 << SCALE_BITS),
+          count(m_gttFlagStats.lumaSamples), count(s.tuCount), count(s.eligibleCount), count(s.eligibleCount * area),
+          count(s.total * area), count(s.ones * area), count(s.prefixRTus), count(s.prefixRTus * area), count(s.nonzeroLevels));
+      msg(NOTICE, "GTT_PATH_STATS experiment=2 sub=%d layer=%d size=%d tau1=%llu tau2=%llu tau3=%llu tau4=%llu "
+                  "path_II=%llu path_IR=%llu path_RI=%llu path_RR=%llu\n",
+          m_encCfg.m_gttExperiment, m_layerId, size, count(s.tau[0]), count(s.tau[1]), count(s.tau[2]), count(s.tau[3]),
+          count(s.paths[0]), count(s.paths[1]), count(s.paths[2]), count(s.paths[3]));
+      msg(NOTICE, "GTT_LAST_STATS experiment=2 sub=%d layer=%d size=%d last_cg_histogram=",
+          m_encCfg.m_gttExperiment, m_layerId, size);
+      bool first = true;
+      for (int cg = 0; cg < size * size / 16; ++cg)
+      {
+        uint64_t n = 0;
+        for (int i = 0; i < 16; ++i) { n += s.lastPositions[16 * cg + i]; }
+        if (n)
+        {
+          msg(NOTICE, "%s%d:%llu", first ? "" : ",", cg, count(n));
+          first = false;
+        }
+      }
+      msg(NOTICE, "%s\n", first ? "none" : "");
+    }
+    printGttSearchStats(m_gttSearchStats, m_layerId, m_encCfg.m_gttExperiment);
+    return;
+  }
   if (!m_encCfg.m_gtt4x4Stats)
   {
     return;

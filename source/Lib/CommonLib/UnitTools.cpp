@@ -37,8 +37,8 @@
 
 #include "UnitTools.h"
 
-#if HHI_GTT4X4
-#include "Gtt4x4.h"
+#if HHI_GTT_COMMON
+#include "Gtt.h"
 #endif
 
 #include "dtrace_next.h"
@@ -10198,7 +10198,7 @@ void TU::setCbfAtDepth(TransformUnit &tu, const CompID &compID, const unsigned &
   tu.cbf[compID] &= ~(1 << depth);
   // then set the CBF
   tu.cbf[compID] |= ((cbf ? 1 : 0) << depth);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && depth == tu.depth && !cbf)
   {
     tu.gttFlag = false;
@@ -10206,18 +10206,53 @@ void TU::setCbfAtDepth(TransformUnit &tu, const CompID &compID, const unsigned &
 #endif
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
+int TU::gttSizeId(const TransformUnit &tu)
+{
+  if (!tu.Y().valid() || tu.Y().width != tu.Y().height)
+  {
+    return -1;
+  }
+  switch (tu.Y().width)
+  {
+  case 4: return 0;
+  case 8: return 1;
+  case 16: return 2;
+  case 32: return 3;
+  default: return -1;
+  }
+}
+
+unsigned TU::gttFlagCtxId(const TransformUnit &tu)
+{
+  CHECK(!tu.cs || !tu.cs->sps, "GTT context requires SPS state");
+  const int sizeId = gttSizeId(tu);
+  CHECK(sizeId < 0, "Unsupported GTT context size");
+  const auto version = tu.cs->sps->m_gttVersion;
+  CHECK(version != 2 && version != 3, "Unsupported GTT context version");
+  CHECK(version == 2 && sizeId != 0, "GTT v2 context is restricted to 4x4");
+  return version == 2 ? Ctx::GttFlag() : Ctx::GttFlagBySize(sizeId);
+}
+
 bool TU::isGttApplicable(const TransformUnit &tu, const CompID compID)
 {
   // Only information available before the transform-index syntax is read here.
-  if (compID != COMP_Y || !tu.Y().valid() || tu.Y().width != 4 || tu.Y().height != 4 ||
-      !tu.cu || !tu.cs || !tu.cs->sps || !tu.cs->slice)
+  if (compID != COMP_Y || !tu.cu || !tu.cs || !tu.cs->sps || !tu.cs->slice)
+  {
+    return false;
+  }
+  const int sizeId = gttSizeId(tu);
+  if (sizeId < 0)
   {
     return false;
   }
   const SPS &sps = *tu.cs->sps;
   const Slice &slice = *tu.cs->slice;
-  return sps.m_gtt4x4Enabled && sps.m_gtt4x4Version == GTT4X4_VERSION &&
+  const bool layoutAllowed = sps.m_gttVersion == 2
+    ? sizeId == 0 && sps.m_gttSizeMask == 1 && sps.m_gttGroupMode == 0
+    : sps.m_gttVersion == 3 && sps.m_gttSizeMask != 0 && !(sps.m_gttSizeMask & 0xf0) &&
+      sps.m_gttGroupMode <= 1 && !(sps.m_gttGroupMode && (sps.m_gttSizeMask & 1));
+  return sps.m_gttEnabled && layoutAllowed && (sps.m_gttSizeMask & (1 << sizeId)) &&
     (tu.cu->predMode == MODE_INTRA || tu.cu->predMode == MODE_INTER) &&
     tu.cu->getBdpcmMode(COMP_Y) == BdpcmMode::NONE && !tu.cu->sbtInfo && !tu.noResidual &&
     slice.m_depQuantEnabledIdc == 1 && !slice.m_signDataHidingEnabledFlag && !sps.m_scalingListEnabledFlag &&
@@ -10245,7 +10280,7 @@ bool TU::isTSAllowed(const TransformUnit &tu, const CompID &compID)
 
 bool TU::isMTSAllowed(const TransformUnit &tu, const CompID &compID)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && tu.gttFlag)
   {
     return false;
@@ -10266,7 +10301,7 @@ bool TU::isMTSAllowed(const TransformUnit &tu, const CompID &compID)
 
 bool TU::lfnstAllowed(const TransformUnit &tu, const CompID &compID)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && tu.gttFlag)
   {
     return false;
@@ -10308,7 +10343,7 @@ bool TU::lfnstAllowed(const TransformUnit &tu, const CompID &compID)
 
 int TU::getNstIdx(const TransformUnit &tu, const CompID &compID)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && tu.gttFlag)
   {
     return 0;
@@ -10539,7 +10574,7 @@ Size TU::getSignPredArea(const TransformUnit &tu, const CompID compID)
 
 bool TU::getDelayedSignCoding(const TransformUnit &tu, const CompID compID)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && tu.gttFlag)
   {
     return false;

@@ -50,6 +50,7 @@
 
 #include "QuantRDOQ.h"
 #include "DepQuant.h"
+#include "GttDct.h"
 #include "Reshape.h"
 
 #if RExt__DECODER_DEBUG_TOOL_STATISTICS
@@ -836,7 +837,30 @@ void TrQuant::xInvNspt(const TransformUnit &tu, const TCoeff *src, TCoeff *dst, 
   }
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
+// All GTT sizes use the fixed integer DCT-II; the wider entry deliberately
+// bypasses legacy SIMD kernels that saturate intermediate data to int16.
+void TrQuant::forwardGttDct(const TransformUnit &tu, const CPelBuf &resi, CoeffBuf &dstCoeff)
+{
+  CHECK(!TU::isGttApplicable(tu, COMP_Y), "Unsupported GTT forward transform");
+  const auto layout = getGttLayout(tu);
+  CHECK(resi.width != layout.width || resi.height != layout.height, "GTT residual/TU size mismatch");
+  if (tu.cs->sps->m_gttVersion == GTT4X4_VERSION)
+  {
+    forwardGtt4x4Dct(tu, resi, dstCoeff);
+    return;
+  }
+  forwardGttDctWide(resi, dstCoeff, tu.cs->sps->m_bitDepths[ChannelType::LUMA],
+                    tu.cs->sps->getMaxLog2TrDynamicRange(ChannelType::LUMA));
+}
+
+bool TrQuant::quantGtt(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &pathCoeffRaster,
+                      const QpParam &cQP, const Ctx &ctx, const GttLayout &layout,
+                      const GttConstraints &constraints, GttQuantResult &result)
+{
+  return m_quant->quantGtt(tu, compID, pathCoeffRaster, cQP, ctx, layout, constraints, result);
+}
+
 void TrQuant::forwardGtt4x4Dct(const TransformUnit &tu, const CPelBuf &resi, CoeffBuf &dstCoeff)
 {
   CHECK(!TU::isGttApplicable(tu, COMP_Y), "Unsupported GTT4x4 forward transform");
@@ -920,17 +944,27 @@ void TrQuant::invTransformNxN(TransformUnit &tu, const CompID &compID, PelBuf &p
   CHECK(uiWidth > tu.cs->sps->getMaxTbSize() || uiHeight > tu.cs->sps->getMaxTbSize(),
         "Maximal allowed transformation size exceeded!");
   CoeffBuf tempCoeff = CoeffBuf(m_tempCoeff, area);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y && tu.gttFlag)
   {
     CHECK(!TU::isGttFlagPresent(tu, compID) || tu.mtsIdx[COMP_Y] != MtsType::DCT2_DCT2,
-          "Invalid GTT4x4 inverse transform mode");
-    CHECK(skipDequant, "GTT4x4 must perform complete dependent dequantization");
-    const Gtt4x4Path path = deriveGtt4x4Path(tu.getCoeffs(COMP_Y));
+          "Invalid GTT inverse transform mode");
+    CHECK(skipDequant, "GTT must perform complete dependent dequantization");
+    const auto layout = getGttLayout(tu);
+    const GttPath path = deriveGttPath(tu.getCoeffs(COMP_Y), layout);
     xDeQuant(tu, tempCoeff, compID, cQP);
     DTRACE_COEFF_BUF(D_TCOEFF, tempCoeff, tu, tu.cu->predMode, compID);
-    inverseGtt4x4Path(tempCoeff, path, tempCoeff);
-    inverseGtt4x4Dct(tu, tempCoeff, pResi);
+    if (tu.cs->sps->m_gttVersion == GTT4X4_VERSION)
+    {
+      inverseGtt4x4Path(tempCoeff, path, tempCoeff);
+      inverseGtt4x4Dct(tu, tempCoeff, pResi);
+    }
+    else
+    {
+      inverseGttPath(tempCoeff, path, tempCoeff, layout);
+      inverseGttDctWide(tempCoeff, pResi, tu.cs->sps->m_bitDepths[ChannelType::LUMA],
+                       tu.cs->sps->getMaxLog2TrDynamicRange(ChannelType::LUMA));
+    }
     DTRACE_PEL_BUF(D_RESIDUALS, pResi, tu, tu.cu->predMode, compID);
     return;
   }
@@ -1538,7 +1572,7 @@ void TrQuant::xQuant(TransformUnit &tu, const CompID &compID, const CCoeffBuf &p
 void TrQuant::preCalcTrans(TransformUnit &tu, const CompID &compID, const CPelBuf &res, const TransList &tl,
                            TransBuffer &tbuf, const bool dctAvailable)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   const bool savedGttFlag = tu.gttFlag;
   if (compID == COMP_Y)
   {
@@ -1581,7 +1615,7 @@ void TrQuant::preCalcTrans(TransformUnit &tu, const CompID &compID, const CPelBu
     }
   }
   tu.mtsIdx[compID] = trOrg;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   tu.gttFlag = savedGttFlag;
 #endif
 }
@@ -1589,7 +1623,7 @@ void TrQuant::preCalcTrans(TransformUnit &tu, const CompID &compID, const CPelBu
 void TrQuant::quantNxN(TransformUnit &tu, const CompID &compID, const QpParam &cQP, TCoeff &absSum, const Ctx &ctx,
                        TransBuffer &tcoeff)
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (compID == COMP_Y)
   {
     tu.gttFlag = false;

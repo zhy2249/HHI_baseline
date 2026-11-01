@@ -41,6 +41,7 @@
 // Include files
 
 #include "CABACWriter.h"
+#include "GttSearch.h"
 
 #include "CommonLib/IntraPrediction.h"
 #include "CommonLib/TrQuant.h"
@@ -461,6 +462,9 @@ private:
 
 protected:
   // interface to option
+#if HHI_GTT_COMMON
+  GttSearchStats *m_gttSearchStats = nullptr;
+#endif
   const EncCfg *m_encCfg;
   EncModeCtrl  *m_modeCtrl;
 
@@ -498,6 +502,9 @@ public:
             EncReshape *m_pcReshape, const unsigned bitDepthY);
 
   void destroy();
+#if HHI_GTT_COMMON
+  void setGttSearchStats(GttSearchStats *stats) { m_gttSearchStats = stats; }
+#endif
 
   CodingStructure **getSaveCSBuf() { return m_pSaveCS; }
 
@@ -541,8 +548,8 @@ protected:
   void xPredTuChroma(TransformUnit &tu, PelBuf &predCb, PelBuf &predCr, IModeTrCandChroma &modeCand);
 
   bool xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum
-#if HHI_GTT4X4
-                             , const Gtt4x4QuantResult *gttResult = nullptr
+#if HHI_GTT_COMMON
+                             , const GttQuantResult *gttResult = nullptr
 #endif
                              );
   void xIntraCodingTUBlockChroma(TransformUnit &tu, const CompID compID, Distortion &dist, PreTrListChroma &ptList);

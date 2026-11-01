@@ -3678,8 +3678,8 @@ void IntraSearch::xPredTuChroma(TransformUnit &tu, PelBuf &predCb, PelBuf &predC
 }
 
 bool IntraSearch::xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, PreTrListLuma &ptList, TCoeff &absSum
-#if HHI_GTT4X4
-                                       , const Gtt4x4QuantResult *gttResult
+#if HHI_GTT_COMMON
+                                       , const GttQuantResult *gttResult
 #endif
                                        )
 {
@@ -3711,18 +3711,18 @@ bool IntraSearch::xIntraCodingTUBlockLuma(TransformUnit &tu, Distortion &dist, P
 
   //===== quantization =====
   const QpParam qp(tu, COMP_Y);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (gttResult)
   {
-    installGtt4x4Candidate(tu, *gttResult);
-    absSum = gttResult->absSum;
+    installGttCandidate(tu, *gttResult);
+    absSum = TCoeff(gttResult->absSum); // installGttCandidate checked the range.
   }
   else
   {
     tu.gttFlag = false;
 #endif
   m_pcTrQuant->quantNxN(tu, COMP_Y, qp, absSum, m_CABACEstimator->getCtx(), ptList.trCoeffs);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   }
 #endif
   DTRACE(g_trace_ctx, D_TU_ABS_SUM, "%d: comp=%d, abssum=%d\n", DTRACE_GET_COUNTER(g_trace_ctx, D_TU_ABS_SUM), COMP_Y,
@@ -4079,13 +4079,13 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
     int        numMTSInvalid     = 0;
     size_t     numTrTypes        = ptList.trTypes.size();
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
     const bool tryGtt = TU::isGttApplicable(tu, COMP_Y) && !csFull->slice->m_isLossless;
     const CUCtx cuCtxStart = cuCtx;
     CUCtx cuCtxBest = cuCtx;
 #endif
     if (numTrTypes > 1
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
         || tryGtt
 #endif
         )
@@ -4127,7 +4127,7 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         m_CABACEstimator->getCtx() = ctxStart;
       }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
       tu.gttFlag = false;
       if (tryGtt) { cuCtx = cuCtxStart; }
 #endif
@@ -4185,7 +4185,7 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         bestCbf        = modeCbf;
 
         if (!isLstTest
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
             || tryGtt
 #endif
             )
@@ -4203,19 +4203,24 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
 
           bestTU->copyComponentFrom(tu, COMP_Y);
           ctxBest = m_CABACEstimator->getCtx();
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
           if (tryGtt) { cuCtxBest = cuCtx; }
 #endif
         }
       }
     }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
     if (tryGtt)
     {
       CHECK(singleCost == MAX_DOUBLE || !bestTU, "GTT search requires a saved legacy winner");
-      auto scoreCandidate = [&](const Gtt4x4QuantResult &candidate)
+      auto *gttStats = getGttSearchSizeStats(m_gttSearchStats, tu.Y().width);
+      const double legacyCost = singleCost;
+      double bestGttCost = MAX_DOUBLE;
+      auto scoreCandidate = [&](const GttQuantResult &candidate)
       {
+        GttSearchTimer timer(gttStats ? &gttStats->scoreNs : nullptr);
+        if (gttStats) { ++gttStats->scoredCandidates; }
         m_CABACEstimator->getCtx() = ctxStart;
         cuCtx = cuCtxStart;
         tu.mtsIdx[COMP_Y] = MtsType::DCT2_DCT2;
@@ -4226,6 +4231,7 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         CHECK(!xIntraCodingTUBlockLuma(tu, dist, ptList, absSum, &candidate), "Invalid GTT candidate");
         const uint64_t bits = xGetIntraFracBitsQT(*csFull, partitioner, true, false, &cuCtx, &cuCtxIntra);
         const double cost = m_pcRdCost->calcRdCost(bits, dist);
+        if (candidate.absSum != 0) { bestGttCost = std::min(bestGttCost, cost); }
         if (cost < singleCost)
         {
           singleCost = cost;
@@ -4248,17 +4254,19 @@ bool IntraSearch::xRecurIntraCodingLumaQT(CodingStructure &cs, Partitioner &part
         }
       };
 
-      Gtt4x4QuantResult zero;
+      GttQuantResult zero;
       zero.feasible = true;
+      zero.qRaster.assign(tu.Y().area(), TCoeff(0));
       scoreCandidate(zero);
       tu.gttFlag = true;
       tu.mtsIdx[COMP_Y] = MtsType::DCT2_DCT2;
 #if RDOQ_CHROMA_LAMBDA
       m_pcTrQuant->selectLambda(COMP_Y);
 #endif
-      const auto candidates = generateGtt4x4Candidates(
-        *m_pcTrQuant, tu, CPelBuf(ptList.res, tu.Y()), ctxStart);
+      const auto candidates = generateGttCandidates(
+        *m_pcTrQuant, tu, CPelBuf(ptList.res, tu.Y()), ctxStart, m_gttSearchStats);
       for (const auto &candidate : candidates) { scoreCandidate(candidate); }
+      recordGttSearchOutcome(gttStats, bestGttCost, legacyCost);
       // Every extended-channel winner was saved, including the last legacy test.
       isLstBest = false;
       cuCtx = cuCtxBest;

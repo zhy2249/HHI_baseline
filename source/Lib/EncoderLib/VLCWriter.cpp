@@ -1677,7 +1677,7 @@ void HLSWriter::codeSPS(const SPS *pcSPS)
   bool sps_extension_flags[NUM_SPS_EXTENSION_FLAGS] = { false };
 
   sps_extension_flags[SPS_EXT__REXT] = pcSPS->m_spsRangeExtension.settingsDifferFromDefaults();
-  sps_extension_flags[SPS_EXT__GTT4X4] = pcSPS->m_gtt4x4Enabled;
+  sps_extension_flags[SPS_EXT__GTT4X4] = pcSPS->m_gttEnabled;
 
   // Other SPS extension flags checked here.
 
@@ -1731,7 +1731,12 @@ void HLSWriter::codeSPS(const SPS *pcSPS)
             break;
           }
         case SPS_EXT__GTT4X4:
-          xWriteCode(pcSPS->m_gtt4x4Version, 8, "sps_gtt4x4_version_idc");
+          xWriteCode(pcSPS->m_gttVersion, 8, "sps_gtt_version_idc");
+          if (pcSPS->m_gttVersion == 3)
+          {
+            xWriteCode(pcSPS->m_gttSizeMask, 8, "sps_gtt_size_mask");
+            xWriteFlag(pcSPS->m_gttGroupMode, "sps_gtt_group_mode_flag");
+          }
           break;
         default:
           CHECK(sps_extension_flags[i] != false,

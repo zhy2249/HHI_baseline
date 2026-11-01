@@ -51,6 +51,8 @@ template<class T1, class T2> static inline std::istream &operator>>(std::istream
 #include "Utilities/program_options_lite.h"
 #include "Utilities/VideoIOYuv.h"
 #include "CommonLib/CommonDef.h"
+#include "CommonLib/Gtt.h"
+#include "CommonLib/GttDct.h"
 #include "CommonLib/AlfParameters.h"
 #include "CommonLib/Rom.h"
 #include "EncoderLib/RateCtrl.h"
@@ -63,6 +65,45 @@ template<class T1, class T2> static inline std::istream &operator>>(std::istream
 #define MACRO_TO_STRING(val)        MACRO_TO_STRING_HELPER(val)
 
 namespace po = df::program_options_lite;
+
+namespace
+{
+// Keep experiment identifiers integral and reject partial parses such as "2x" or "2.5".
+// Range/capability checks remain deferred until all config/CLI overrides have been read.
+struct GttModeOption { int &value; };
+std::istream &operator>>(std::istream &input, GttModeOption &option)
+{
+  std::string token;
+  input >> token;
+  size_t consumed = 0;
+  long long value = 0;
+  try { value = std::stoll(token, &consumed, 10); }
+  catch (...) { input.setstate(std::ios::failbit); return input; }
+  if (consumed != token.size() || value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max())
+  {
+    input.setstate(std::ios::failbit);
+    return input;
+  }
+  if (!input.eof())
+  {
+    input >> std::ws;
+    if (!input.eof()) { input.setstate(std::ios::failbit); return input; }
+  }
+  option.value = int(value);
+  return input;
+}
+
+struct GttStatsOption { bool &value; };
+std::istream &operator>>(std::istream &input, GttStatsOption &option)
+{
+  int value = 0;
+  GttModeOption integer { value };
+  input >> integer;
+  if (value != 0 && value != 1) { input.setstate(std::ios::failbit); return input; }
+  option.value = value != 0;
+  return input;
+}
+}
 
 enum ExtendedProfileName   // this is used for determining profile strings, where multiple profiles map to a single
                            // profile idc with various constraint flag combinations
@@ -514,6 +555,8 @@ static uint32_t getMaxSlicesByLevel(Level::Name level)
 
 bool EncAppCfg::parseCfg(int argc, char *argv[], EncCfg *encCfg)
 {
+  GttModeOption       gttModeOption { encCfg->m_gttExperiment };
+  GttStatsOption      gttStatsOption { encCfg->m_gttStats };
   int                 tmpChromaFormat                       = 0;
   int                 tmpInputChromaFormat                  = 420;
   int                 tmpConstraintChromaFormat             = 0;
@@ -1160,6 +1203,8 @@ bool EncAppCfg::parseCfg(int argc, char *argv[], EncCfg *encCfg)
   ("RDOQTS",                                          encCfg->m_useRDOQTS,                              "")
   ("GTT4x4",                                          encCfg->m_gtt4x4Enabled,                          "Enable experimental luma 4x4 grouped-tree transform (default follows HHI_GTT4X4; 0 disables; enabling requires HHI_GTT4X4=1)")
   ("GTT4x4Stats",                                     encCfg->m_gtt4x4Stats,                            "Report final GTT flag count and one fraction (default follows HHI_GTT4X4_STATS; 0/1 overrides the default)")
+  ("GTT",                                           gttModeOption,                                    "GTT experiment 2: 0=off, 1=8 equal, 2=16 equal, 3=32 equal, 4=16 first-CG, 5=32 first-CG, 6=4 migration (default follows HHI_GTT)")
+  ("GTTStats",                                      gttStatsOption,                                   "Report final GTT statistics (default follows HHI_GTT_STATS; 0/1 overrides)")
   ("SelectiveRDOQ",                                   encCfg->m_useSelectiveRDOQ,                       "Enable selective RDOQ")
 
   ;opts.addOptions()
@@ -3785,9 +3830,17 @@ bool EncAppCfg::xCheckParameter(EncCfg *encCfg)
   bool check_failed = false; /* abort if there is a fatal configuration problem */
 #define xConfirmPara(a, b) check_failed |= confirmPara(a, b)
 
-  if (encCfg->m_gtt4x4Enabled)
+  xConfirmPara(encCfg->m_gttExperiment < 0 || encCfg->m_gttExperiment > 6, "GTT must be a registered mode from 0 through 6");
+  xConfirmPara(encCfg->m_gtt4x4Enabled && encCfg->m_gttExperiment != 0, "GTT4x4 and GTT cannot both be enabled");
+  xConfirmPara(encCfg->m_gtt4x4Enabled && !HHI_GTT4X4, "GTT4x4 requested but this build has HHI_GTT4X4=0");
+  xConfirmPara(encCfg->m_gttExperiment != 0 && HHI_GTT == 0, "GTT requested but this build has HHI_GTT=0");
+  if (encCfg->m_gttExperiment > 0 && encCfg->m_gttExperiment <= 6)
   {
-    xConfirmPara(!HHI_GTT4X4, "GTT4x4 requested but this build has HHI_GTT4X4=0");
+    xConfirmPara(unsigned(floorLog2(unsigned(getGttMode(encCfg->m_gttExperiment).size))) > encCfg->m_log2MaxTbSize,
+                 "GTT mode size exceeds the maximum transform size");
+  }
+  if (encCfg->m_gtt4x4Enabled || encCfg->m_gttExperiment != 0)
+  {
     xConfirmPara(encCfg->m_DepQuantEnabledIdc != 1, "GTT4x4 requires DepQuant=1");
     xConfirmPara(!encCfg->m_useRDOQ || !encCfg->m_useRDOQTS, "GTT4x4 requires RDOQ=1 and RDOQTS=1");
     xConfirmPara(encCfg->m_SignDataHidingEnabledFlag, "GTT4x4 requires SignHideFlag=0");
@@ -3796,6 +3849,9 @@ bool EncAppCfg::xCheckParameter(EncCfg *encCfg)
                  "GTT4x4 supports only standard lossy coding without MixedLossyLossless");
     xConfirmPara(encCfg->m_internalBitDepth[ChannelType::LUMA] != 10 || encCfg->m_extendedPrecisionProcessingFlag,
                  "GTT4x4 requires InternalBitDepth=10 and transform dynamic range 15");
+    xConfirmPara(encCfg->m_tsrcRicePresentFlag || encCfg->m_rrcRiceExtensionEnableFlag ||
+                   encCfg->m_persistentRiceAdaptationEnabledFlag || encCfg->m_reverseLastSigCoeffEnabledFlag,
+                 "GTT requires default range-extension settings");
   }
 
   xConfirmPara(encCfg->m_alfapsIDShift < 0, "ALF APSs shift should be positive");
@@ -5526,6 +5582,18 @@ void EncAppCfg::xPrintParameter(EncCfg *encCfg)
               "kernel=I,R45Q10 coeff=724 flag=context-1 signPred=local-off stats_default=%d stats=%d\n",
       HHI_GTT4X4, int(encCfg->m_gtt4x4Enabled), encCfg->m_gtt4x4Enabled ? 2 : 0,
       encCfg->m_DepQuantEnabledIdc, HHI_GTT4X4_STATS, int(encCfg->m_gtt4x4Stats));
+  const auto &gttMode = getGttMode(encCfg->m_gttExperiment);
+#if HHI_GTT_COMMON
+  const char *gttDct = GTT_DCT_IMPLEMENTATION;
+#else
+  const char *gttDct = "not-compiled";
+#endif
+  msg(NOTICE, "EXPERIMENT: GTT experiment=2 sub=%d compile=%d default_sub=%d enabled=%d version=%d "
+              "sizes=%d mask=0x%02x groupMode=%d component=Y DQ=%d kernel=I,R724 flag=context-by-size "
+              "signPred=local-off stats_default=%d stats=%d dct=%s revision=e2-r1\n",
+      encCfg->m_gttExperiment, int(HHI_GTT != 0), HHI_GTT, int(encCfg->m_gttExperiment != 0),
+      encCfg->m_gttExperiment ? 3 : 0, gttMode.size, unsigned(gttMode.sizeMask), unsigned(gttMode.groupMode),
+      encCfg->m_DepQuantEnabledIdc, HHI_GTT_STATS, int(encCfg->m_gttStats), gttDct);
   // msg( DETAILS, "\n" );
   msg(DETAILS, "Input          File                    : %s\n", encCfg->m_inputFileName.c_str());
   msg(DETAILS, "Bitstream      File                    : %s\n", encCfg->m_bitstreamFileName.c_str());

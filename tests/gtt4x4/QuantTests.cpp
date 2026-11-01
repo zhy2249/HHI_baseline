@@ -11,7 +11,7 @@
 #include <memory>
 #include <stdexcept>
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 
 namespace
 {
@@ -48,8 +48,9 @@ struct Fixture
     sps.m_qpBDOffset[ChannelType::LUMA] = 12;
     sps.m_internalMinusInputBitDepth[ChannelType::LUMA] = 0;
     sps.m_ctuSize = 64;
-    sps.m_gtt4x4Enabled = true;
-    sps.m_gtt4x4Version = GTT4X4_VERSION;
+    sps.m_gttEnabled = true;
+    sps.m_gttVersion = GTT4X4_VERSION;
+    sps.m_gttSizeMask = 1;
     sps.m_depQuantEnabledFlag = true;
     pps.m_picWidthInLumaSamples = 64;
     pps.m_picHeightInLumaSamples = 64;
@@ -540,7 +541,7 @@ int main()
 #else
 int main()
 {
-  std::cout << "GTT constrained DQ tests require HHI_GTT4X4=1; skipped.\n";
+  std::cout << "GTT constrained DQ tests require compiled GTT support; skipped.\n";
   return 77;
 }
 #endif

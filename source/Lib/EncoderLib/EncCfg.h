@@ -892,6 +892,8 @@ struct EncCfg
   bool                m_useRDOQTS { true };
   bool                m_gtt4x4Enabled { HHI_GTT4X4 != 0 };
   bool                m_gtt4x4Stats { HHI_GTT4X4_STATS != 0 };
+  int                 m_gttExperiment { HHI_GTT };
+  bool                m_gttStats { HHI_GTT_STATS != 0 };
   bool                m_useSelectiveRDOQ { false };
   FastInterSearchMode m_fastInterSearchMode { FASTINTERSEARCH_DISABLED };
   bool                m_bUseEarlyCU { false };

@@ -1763,8 +1763,10 @@ void HLSyntaxReader::dpb_parameters(int maxSubLayersMinus1, bool subLayerInfoFla
 
 void HLSyntaxReader::parseSPS(SPS *pcSPS)
 {
-  pcSPS->m_gtt4x4Enabled = false;
-  pcSPS->m_gtt4x4Version = 0;
+  pcSPS->m_gttEnabled = false;
+  pcSPS->m_gttVersion = 0;
+  pcSPS->m_gttSizeMask = 0;
+  pcSPS->m_gttGroupMode = 0;
   uint32_t uiCode;
 
 #if ENABLE_TRACING
@@ -2842,10 +2844,24 @@ void HLSyntaxReader::parseSPS(SPS *pcSPS)
           break;
         case SPS_EXT__GTT4X4:
           CHECK(bSkipTrailingExtensionBits, "GTT4x4 cannot follow an unknown SPS extension payload");
-          xReadCode(8, uiCode, "sps_gtt4x4_version_idc");
-          pcSPS->m_gtt4x4Enabled = true;
-          pcSPS->m_gtt4x4Version = uint8_t(uiCode);
-          pcSPS->validateGtt4x4();
+          xReadCode(8, uiCode, "sps_gtt_version_idc");
+          pcSPS->m_gttEnabled = true;
+          pcSPS->m_gttVersion = uint8_t(uiCode);
+          if (pcSPS->m_gttVersion == 2)
+          {
+            pcSPS->m_gttSizeMask = 1;
+          }
+          else if (pcSPS->m_gttVersion == 3)
+          {
+            xReadCode(8, uiCode, "sps_gtt_size_mask");
+            pcSPS->m_gttSizeMask = uint8_t(uiCode);
+            xReadFlag(uiCode, "sps_gtt_group_mode_flag");
+            pcSPS->m_gttGroupMode = uint8_t(uiCode);
+          }
+          else
+          {
+            THROW("Unsupported GTT protocol version");
+          }
           break;
         default:
           bSkipTrailingExtensionBits = true;

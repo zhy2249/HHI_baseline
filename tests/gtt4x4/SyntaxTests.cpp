@@ -94,22 +94,23 @@ void testSps()
   const auto off = serialize(sps);
   SPS decoded;
   // Explicitly test reuse of the new fields while baseline fields start clean.
-  decoded.m_gtt4x4Enabled = true;
-  decoded.m_gtt4x4Version = 99;
+  decoded.m_gttEnabled = true;
+  decoded.m_gttVersion = 99;
   parse(off, decoded);
-  require(!decoded.m_gtt4x4Enabled && decoded.m_gtt4x4Version == 0, "Absent GTT extension was not cleared");
+  require(!decoded.m_gttEnabled && decoded.m_gttVersion == 0, "Absent GTT extension was not cleared");
   require(serialize(decoded).getFifo() == off.getFifo(), "Disabled SPS did not round-trip byte exactly");
 
   const auto contextStream = withGttExtension(off, 2);
-#if HHI_GTT4X4
-  sps.m_gtt4x4Enabled = true;
-  sps.m_gtt4x4Version = 2;
+#if HHI_GTT_COMMON
+  sps.m_gttEnabled = true;
+  sps.m_gttVersion = 2;
+    sps.m_gttSizeMask = 1;
   sps.validateGtt4x4();
   require(serialize(sps).getFifo() == contextStream.getFifo(), "Unexpected GTT SPS extension placement/payload");
   parse(contextStream, decoded);
-  require(decoded.m_gtt4x4Enabled && decoded.m_gtt4x4Version == 2, "GTT v2 SPS did not round-trip");
+  require(decoded.m_gttEnabled && decoded.m_gttVersion == 2, "GTT v2 SPS did not round-trip");
   parse(off, decoded);
-  require(!decoded.m_gtt4x4Enabled && decoded.m_gtt4x4Version == 0, "GTT SPS state survived subsequent off SPS");
+  require(!decoded.m_gttEnabled && decoded.m_gttVersion == 0, "GTT SPS state survived subsequent off SPS");
   require(serialize(decoded).getFifo() == off.getFifo(), "GTT off SPS gained payload");
 
   SPS invalid = sps;
@@ -126,8 +127,9 @@ void testSps()
   requireReject([&] { invalid.validateGtt4x4(); }, "GTT extended precision accepted");
 #else
   requireReject([&] { parse(contextStream, decoded); }, "Unsupported build accepted GTT SPS");
-  sps.m_gtt4x4Enabled = true;
-  sps.m_gtt4x4Version = 2;
+  sps.m_gttEnabled = true;
+  sps.m_gttVersion = 2;
+    sps.m_gttSizeMask = 1;
   requireReject([&] { serialize(sps); }, "Unsupported build emitted GTT SPS");
 #endif
   requireReject([&] { parse(withGttExtension(off, 1), decoded); }, "Obsolete bypass version accepted");
@@ -140,12 +142,12 @@ void testSps()
   const auto oldRext = serialize(rext);
   SPS decodedRext;
   parse(oldRext, decodedRext);
-  require(!decodedRext.m_gtt4x4Enabled && decodedRext.m_spsRangeExtension.m_rrcRiceExtensionEnableFlag,
+  require(!decodedRext.m_gttEnabled && decodedRext.m_spsRangeExtension.m_rrcRiceExtensionEnableFlag,
           "Legacy REXT SPS state changed");
   require(serialize(decodedRext).getFifo() == oldRext.getFifo(), "Legacy REXT SPS did not round-trip");
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 struct TuFixture
 {
   XuPool pool;
@@ -156,8 +158,9 @@ struct TuFixture
   TransformUnit tu { ChromaFormat::_400, Area(0, 0, 4, 4) };
   TuFixture()
   {
-    sps.m_gtt4x4Enabled = true;
-    sps.m_gtt4x4Version = 2;
+    sps.m_gttEnabled = true;
+    sps.m_gttVersion = 2;
+    sps.m_gttSizeMask = 1;
     cs.sps = &sps;
     cs.slice = &slice;
     slice.m_sps = &sps;
@@ -177,7 +180,7 @@ void testContextFlag()
   require(Ctx::GttFlag.Size == 1, "Expected one shared GTT context");
   require(Ctx::GttFlag.Offset == Ctx::LfCccmFlag.Offset + Ctx::LfCccmFlag.Size,
           "GTT context must follow all baseline contexts");
-  require(Ctx::NumberOfContexts == Ctx::GttFlag.Offset + 1, "Unexpected context count");
+  require(Ctx::NumberOfContexts == Ctx::GttFlag.Offset + 5, "Unexpected context count");
   for (unsigned i = 0; i < 20; ++i)
   {
     const auto &table = ContextSetCfg::getInitTable(i);
@@ -286,7 +289,7 @@ int main()
   try
   {
     testSps();
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
     testContextFlag();
 #endif
     std::cout << "GTT4x4 syntax tests passed (compile=" << HHI_GTT4X4 << ")\n";

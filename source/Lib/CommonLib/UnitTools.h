@@ -313,7 +313,9 @@ namespace TU
 bool getCbf(const TransformUnit &tu, const CompID &compID);
 bool getCbfAtDepth(const TransformUnit &tu, const CompID &compID, const unsigned &depth);
 void setCbfAtDepth(TransformUnit &tu, const CompID &compID, const unsigned &depth, const bool &cbf);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
+int gttSizeId(const TransformUnit &tu);
+unsigned gttFlagCtxId(const TransformUnit &tu);
 bool isGttApplicable(const TransformUnit &tu, const CompID compID);
 bool isGttFlagPresent(const TransformUnit &tu, const CompID compID);
 #endif

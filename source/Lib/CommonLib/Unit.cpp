@@ -902,7 +902,7 @@ TransformUnit::TransformUnit(const ChromaFormat _chromaFormat, const Area &_area
 
 void TransformUnit::initData()
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   gttFlag = false;
 #endif
   for (unsigned i = 0; i < MAX_NUM_TBLOCKS; i++)
@@ -941,7 +941,7 @@ void TransformUnit::init(TCoeff **coeffs, uint8_t **signsPredArea, EnumArray<Pel
 TransformUnit &TransformUnit::operator=(const TransformUnit &other)
 {
   CHECK(chromaFormat != other.chromaFormat, "Incompatible formats");
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   gttFlag = other.gttFlag;
 #endif
 
@@ -1000,7 +1000,7 @@ void TransformUnit::copyComponentFrom(const TransformUnit &other, const CompID i
 {
   CHECK(chromaFormat != other.chromaFormat, "Incompatible formats");
   CHECKD(blocks[i].area() != other.blocks[i].area(), "Transformation units cover different areas");
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   if (i == COMP_Y)
   {
     gttFlag = other.gttFlag;

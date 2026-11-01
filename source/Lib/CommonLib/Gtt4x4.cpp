@@ -1,6 +1,6 @@
 #include "Gtt4x4.h"
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 #include "Rom.h"
 #include <limits>
 

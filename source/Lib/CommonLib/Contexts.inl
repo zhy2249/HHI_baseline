@@ -4231,7 +4231,7 @@ const CtxSet ContextSetCfg::LfCccmFlag = ContextSetCfg::addCtxSet
   { DWO, DWO, DWO, DWO, DWO, DWO, DWO, DWO, DWO, DWO },
   });
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 // Append only: every baseline context retains its original offset.
 // Frozen, untrained v2 initialization for B/P/I/L: init=35 has zero QP slope
 // and a weak zero prior (initial P(1)=55/128 before probability quantization).
@@ -4243,5 +4243,14 @@ const CtxSet ContextSetCfg::GttFlag = ContextSetCfg::addCtxSet
   { DWE }, { DWE }, { DWE }, { DWE },
   { DWO }, { DWO }, { DWO }, { DWO },
   { DWO }, { DWO }, { DWO }, { DWO },
+});
+// v3 contexts follow the frozen v2 context in every GTT-capable build.
+const CtxSet ContextSetCfg::GttFlagBySize = ContextSetCfg::addCtxSet
+({
+  { 35, 35, 35, 35 }, { 35, 35, 35, 35 }, { 35, 35, 35, 35 }, { 35, 35, 35, 35 },
+  { DWS, DWS, DWS, DWS }, { DWS, DWS, DWS, DWS }, { DWS, DWS, DWS, DWS }, { DWS, DWS, DWS, DWS },
+  { DWE, DWE, DWE, DWE }, { DWE, DWE, DWE, DWE }, { DWE, DWE, DWE, DWE }, { DWE, DWE, DWE, DWE },
+  { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO },
+  { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO }, { DWO, DWO, DWO, DWO },
 });
 #endif

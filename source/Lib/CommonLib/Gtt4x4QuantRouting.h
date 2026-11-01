@@ -3,7 +3,7 @@
 
 #include "CommonDef.h"
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 #include <array>
 
 namespace Gtt4x4QuantRouting

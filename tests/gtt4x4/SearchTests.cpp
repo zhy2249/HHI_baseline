@@ -9,7 +9,7 @@
 #include <memory>
 #include <stdexcept>
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 namespace
 {
 unsigned checks = 0;
@@ -37,8 +37,9 @@ struct Fixture
     sps.m_bitDepths[ChannelType::LUMA] = sps.m_bitDepths[ChannelType::CHROMA] = 10;
     sps.m_qpBDOffset[ChannelType::LUMA] = 12;
     sps.m_ctuSize = 64;
-    sps.m_gtt4x4Enabled = true;
-    sps.m_gtt4x4Version = GTT4X4_VERSION;
+    sps.m_gttEnabled = true;
+    sps.m_gttVersion = GTT4X4_VERSION;
+    sps.m_gttSizeMask = 1;
     sps.m_depQuantEnabledFlag = true;
     sps.m_numPredSign = 4;
     pps.m_picWidthInLumaSamples = pps.m_picHeightInLumaSamples = 64;
@@ -178,7 +179,7 @@ void run()
 
 int main()
 {
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   try
   {
     initROM();

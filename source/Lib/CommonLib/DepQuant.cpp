@@ -37,8 +37,9 @@
 #include "UnitTools.h"
 
 #include <bitset>
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 #include "Gtt4x4QuantRouting.h"
+#include "GttQuantRouting.h"
 #include <cmath>
 #endif
 
@@ -776,9 +777,9 @@ public:
                               bool enableScalingLists, int *piDequantCoef, const uint64_t stateTransTab) const;
   void           initQuantBlock(const TransformUnit &tu, const CompID compID, const QpParam &cQP, const double lambda,
                                 int gValue);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   void initQuantBlockGtt(const TransformUnit &tu, const CompID compID, const QpParam &cQP, double lambda,
-                         uint64_t maxSourceMagnitude);
+                         uint64_t maxSourceMagnitude, bool useProductBounds = false);
 #endif
   inline bool    preQuantAbsTCQ(const TCoeff absCoeff, PQData *pqData, TCoeff quanCoeff) const;
   inline bool    preQuantAbsSQ(const TCoeff absCoeff, PQData *pqData, TCoeff quanCoeff) const;
@@ -875,9 +876,9 @@ void Quantizer::initQuantBlock(const TransformUnit &tu, const CompID compID, con
   m_DistOrgFact = (int64_t)(nomDistFactor * double(int64_t(1) << (m_DistShift + 1)) + .5);
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 void Quantizer::initQuantBlockGtt(const TransformUnit &tu, const CompID compID, const QpParam &cQP,
-                                 const double lambda, const uint64_t maxSourceMagnitude)
+                                 const double lambda, const uint64_t maxSourceMagnitude, const bool useProductBounds)
 {
   // The reconstruction range remains 15 bits. Only the proxy-distortion
   // accumulator precision adapts to the wider forward coefficients, which can
@@ -910,6 +911,48 @@ void Quantizer::initQuantBlockGtt(const TransformUnit &tu, const CompID compID, 
         "GTT lambda exceeds the representable fixed-point cost range");
   const int dfShift = ceil_log2(uint64_t(factorBound) + 1);
   m_DistShift = 62 + m_QShift - 2 * sourceRange - dfShift;
+  if (useProductBounds)
+  {
+    // Large transforms at small lambda can make the old 2*sourceRange
+    // estimate negative even though the quantization-index cap keeps every
+    // actual product representable. Establish the products of the existing
+    // fixed-point formula directly, without changing the QP/grid or lambda.
+    const uint64_t scaledSource = maxSourceMagnitude * uint64_t(m_QScale);
+    const int64_t sourceIndex = (int64_t(scaledSource) + m_QAdd) >> m_QShift;
+    const uint64_t maxIndex = sourceIndex < 0 ? 2 :
+      uint64_t(std::max<int64_t>(1, std::min<int64_t>(m_maxQIdx, sourceIndex))) + 3;
+    const uint64_t indexSquare = maxIndex * maxIndex;
+    CHECK(scaledSource && maxIndex > uint64_t(std::numeric_limits<int64_t>::max()) / scaledSource,
+          "GTT source/index product exceeds the fixed-point range");
+    const uint64_t sourceIndexProduct = scaledSource * maxIndex;
+    bool found = false;
+    // Preserve the frozen precision whenever its original estimate is safe.
+    // Only the pessimistic negative estimate needs a more precise search.
+    for (int shift = m_DistShift >= 0 ? std::min(61, m_DistShift) : 61; shift >= 0; --shift)
+    {
+      const double step = std::ldexp(nominalFactor, shift + m_QShift);
+      const double original = std::ldexp(nominalFactor, shift + 1);
+      if (!std::isfinite(step) || !std::isfinite(original) || step >= double(int64_t(1) << 62) ||
+          original >= double(int64_t(1) << 62))
+      {
+        continue;
+      }
+      const uint64_t stepFactor = uint64_t(step + 0.5);
+      const uint64_t originalFactor = uint64_t(original + 0.5);
+      const uint64_t rounding = (uint64_t(1) << shift) >> 1;
+      const uint64_t limit = uint64_t(std::numeric_limits<int64_t>::max()) - rounding;
+      // abs((q*A - src*B)*q) <= max(q*q*A, src*q*B).
+      // This also bounds each earlier multiplication and signed subtraction.
+      if (stepFactor <= limit / indexSquare &&
+          (!sourceIndexProduct || originalFactor <= limit / sourceIndexProduct))
+      {
+        m_DistShift = shift;
+        found = true;
+        break;
+      }
+    }
+    CHECK(!found, "GTT source/lambda products exceed the fixed-point cost range");
+  }
   CHECK(m_DistShift < 0 || m_DistShift > 61, "GTT source/lambda exceeds the fixed-point cost range");
   m_DistAdd = (int64_t(1) << m_DistShift) >> 1;
   const double stepFactor = std::ldexp(nominalFactor, m_DistShift + m_QShift);
@@ -1146,7 +1189,7 @@ class State
   friend class CommonCtx;
 
 public:
-  State(const RateEstimator &rateEst, CommonCtx &commonCtx, const int stateId);
+  State(const RateEstimator &rateEst, CommonCtx &commonCtx, const int stateId, const int historySlot = -1);
 
   template<bool cpy> inline void updateState(const ScanInfo &scanInfo, const State *prevStates,
                                              const Decision &decision, const int baseLevel, const bool extRiceFlag);
@@ -1357,6 +1400,7 @@ private:
   int8_t                     m_goRicePar;
   int8_t                     m_goRiceZero;
   const int8_t               m_stateId;
+  const int8_t               m_historySlot;
   const BinFracBits *const   m_sigFracBitsArray;
   const CoeffFracBits *const m_gtxFracBitsArray;
   CommonCtx                 &m_commonCtx;
@@ -1367,9 +1411,10 @@ public:
   static const int64_t rdCostInit = std::numeric_limits<int64_t>::max() >> 1;
 };
 
-State::State(const RateEstimator &rateEst, CommonCtx &commonCtx, const int stateId)
+State::State(const RateEstimator &rateEst, CommonCtx &commonCtx, const int stateId, const int historySlot)
   : m_sbbFracBits { { 0, 0 } }
   , m_stateId(stateId)
+  , m_historySlot(historySlot < 0 ? stateId : historySlot)
   , m_sigFracBitsArray(rateEst.sigFlagBits(stateId))
   , m_gtxFracBitsArray(rateEst.gtxFracBits(stateId))
   , m_commonCtx(commonCtx)
@@ -1575,8 +1620,8 @@ template<bool cpy> inline void State::updateStateEOS(const ScanInfo &scanInfo, c
 
 template<bool cpy> inline void CommonCtx::update(const ScanInfo &scanInfo, const State *prevState, State &currState)
 {
-  uint8_t    *sbbFlags  = m_currSbbCtx[currState.m_stateId].sbbFlags;
-  uint8_t    *levels    = m_currSbbCtx[currState.m_stateId].levels;
+  uint8_t    *sbbFlags  = m_currSbbCtx[currState.m_historySlot].sbbFlags;
+  uint8_t    *levels    = m_currSbbCtx[currState.m_historySlot].levels;
   std::size_t setCpSize = m_nbInfo[scanInfo.scanIdx - 1].maxDist * sizeof(uint8_t);
   if (prevState && prevState->m_refSbbCtxId >= 0)
   {
@@ -1599,7 +1644,7 @@ template<bool cpy> inline void CommonCtx::update(const ScanInfo &scanInfo, const
                                ? 1
                                : 0);
   currState.m_numSigSbb   = 0;
-  currState.m_refSbbCtxId = currState.m_stateId;
+  currState.m_refSbbCtxId = currState.m_historySlot;
   currState.m_sbbFracBits = m_sbbFlagBits[sigNSbb];
 
   ::memset(&currState.m_sbb, 0, sizeof(currState.m_sbb));
@@ -1681,10 +1726,13 @@ public:
              const Ctx &ctx, TCoeff &absSum, bool enableScalingLists, int *quantCoeff);
   void dequant(const TransformUnit &tu, CoeffBuf &recCoeff, const CompID compID, const QpParam &cQP,
                bool enableScalingLists, int *quantCoeff);
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   bool quantGtt4x4(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID, const QpParam &cQP,
                    const double lambda, const Ctx &ctx, const Gtt4x4Constraints &constraints,
                    Gtt4x4QuantResult &result);
+  bool quantGtt(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID, const QpParam &cQP,
+                double lambda, const Ctx &ctx, const GttLayout &layout, const GttConstraints &constraints,
+                GttQuantResult &result);
 #endif
 
   int  m_baseLevel;
@@ -2111,7 +2159,7 @@ void DepQuant::quant(TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID 
   tu.lastPos[compID] = scanIdx - 1;
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID,
                           const QpParam &cQP, const double lambda, const Ctx &ctx,
                           const Gtt4x4Constraints &constraints, Gtt4x4QuantResult &result)
@@ -2338,6 +2386,316 @@ bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CCoeffBuf &srcCoeff, c
   result = candidate;
   return true;
 }
+
+bool DepQuant::quantGtt(const TransformUnit &tu, const CCoeffBuf &srcCoeff, const CompID compID,
+                        const QpParam &cQP, const double lambda, const Ctx &ctx, const GttLayout &layout,
+                        const GttConstraints &constraints, GttQuantResult &result)
+{
+  result = GttQuantResult {};
+  CHECK(!TU::isGttApplicable(tu, compID) || !tu.gttFlag || tu.mtsIdx[compID] != MtsType::DCT2_DCT2,
+        "GTT quantization requires an applicable GTT luma TU");
+  const GttLayout expected = getGttLayout(tu);
+  CHECK(layout.width != expected.width || layout.height != expected.height ||
+          layout.numCoeff != expected.numCoeff || layout.groupBegin != expected.groupBegin ||
+          layout.groupEnd != expected.groupEnd || layout.numCg != expected.numCg ||
+          layout.cgSize != expected.cgSize || layout.groupMode != expected.groupMode,
+        "GTT quantization layout differs from the TU/SPS");
+  CHECK(!srcCoeff.buf || srcCoeff.width != layout.width || srcCoeff.height != layout.height ||
+          srcCoeff.stride < layout.width, "GTT quantization requires a complete source buffer");
+  CHECK(constraints.minLastScan < 0 || constraints.minLastScan > constraints.maxLastScan ||
+          constraints.maxLastScan >= layout.numCoeff, "Invalid GTT last-position interval");
+  for (const int parity: constraints.requiredParity)
+  {
+    CHECK(parity < -1 || parity > 1, "Invalid GTT parity constraint");
+  }
+  CHECK(!(lambda > 0.0) || !std::isfinite(lambda), "Invalid GTT quantization lambda");
+  CHECK(cQP.Qp(false) < 0 || cQP.Qp(false) > MAX_QP + tu.cs->sps->m_qpBDOffset[ChannelType::LUMA],
+        "Invalid GTT quantization QP");
+
+  if (layout.width == 4)
+  {
+    // The migration control keeps the frozen single-CG arithmetic and stable
+    // survivor order, including its exact fixed-point proxy costs.
+    Gtt4x4Constraints oldConstraints;
+    oldConstraints.minLastScan = uint8_t(constraints.minLastScan);
+    oldConstraints.maxLastScan = uint8_t(constraints.maxLastScan);
+    oldConstraints.requiredParity = constraints.requiredParity;
+    Gtt4x4QuantResult oldResult;
+    if (!quantGtt4x4(tu, srcCoeff, compID, cQP, lambda, ctx, oldConstraints, oldResult))
+    {
+      return false;
+    }
+    result.feasible = true;
+    result.qRaster.assign(oldResult.qRaster.begin(), oldResult.qRaster.end());
+    result.lastScan = oldResult.lastScan;
+    result.absSum = oldResult.absSum;
+    result.proxyCost = oldResult.proxyCost;
+    return true;
+  }
+
+  const TUParameters &tuPars = *g_Rom.getTUPars(tu.blocks[compID], compID, 0);
+  CHECK(tuPars.m_width != layout.width || tuPars.m_height != layout.height ||
+          tuPars.m_numCoeff != layout.numCoeff || tuPars.m_numSbb != layout.numCg || tuPars.m_sbbSize != 16,
+        "Unexpected GTT coding-group layout");
+  uint64_t maxSourceMagnitude = 0;
+  for (int y = 0; y < layout.height; ++y)
+  {
+    for (int x = 0; x < layout.width; ++x)
+    {
+      const int64_t source = srcCoeff.at(x, y);
+      const uint64_t magnitude = source < 0 ? uint64_t(-source) : uint64_t(source);
+      CHECK(magnitude > uint64_t(std::numeric_limits<TCoeff>::max()), "GTT source magnitude exceeds TCoeff");
+      maxSourceMagnitude = std::max(maxSourceMagnitude, magnitude);
+    }
+  }
+  Quantizer quantizer;
+  quantizer.initQuantBlockGtt(tu, compID, cQP, lambda, maxSourceMagnitude, true);
+  const TCoeff quantCoeff = TCoeff(quantizer.getQScale());
+  const int baseLevel = ctx.getBaseLevel();
+  const bool extRiceFlag = tu.cs->sps->m_spsRangeExtension.m_rrcRiceExtensionEnableFlag;
+  CHECK(extRiceFlag, "GTT does not support extended Rice coding");
+  RateEstimator rateEstimator;
+  rateEstimator.initCtx(tuPars, tu, compID, ctx.getFracBitsAcess());
+  m_commonCtx.reset(tuPars, rateEstimator);
+
+  struct PreQuantStage
+  {
+    PQData levels[4] {};
+    bool nearZero = false;
+  };
+  std::vector<PreQuantStage> preQuant(constraints.maxLastScan + 1);
+  // Invalid states are tracked separately and never take part in arithmetic;
+  // do not discard the upper two bits as the legacy sentinel-based trellis did.
+  constexpr int64_t unreachable = std::numeric_limits<int64_t>::max();
+  // Rate-table entries and signed last/CBF deltas each fit 32 bits. Sixteen
+  // such magnitudes per position conservatively covers coefficient/CG/last costs.
+  // Bound the entire path before State performs any signed additions.
+  uint64_t pathMagnitudeBound = uint64_t(layout.numCoeff + 1) * 16 * uint64_t(std::numeric_limits<uint32_t>::max());
+  for (int i = 0; i <= constraints.maxLastScan; ++i)
+  {
+    const auto &scan = tuPars.m_scanId2BlkPos[i];
+    const int64_t source = srcCoeff.at(scan.x, scan.y);
+    auto &stage = preQuant[i];
+    stage.nearZero = quantizer.preQuantAbsTCQ(TCoeff(source < 0 ? -source : source), stage.levels, quantCoeff);
+    uint64_t maxDelta = 0;
+    for (const auto &pq: stage.levels)
+    {
+      const uint64_t magnitude = pq.deltaDist < 0 ? uint64_t(-(pq.deltaDist + 1)) + 1 : uint64_t(pq.deltaDist);
+      maxDelta = std::max(maxDelta, magnitude);
+    }
+    CHECK(maxDelta >= uint64_t(unreachable) || pathMagnitudeBound >= uint64_t(unreachable) - maxDelta,
+          "GTT complete path exceeds the representable fixed-point cost range");
+    pathMagnitudeBound += maxDelta;
+  }
+
+#define GTT_JOINT_STATE(slot) { rateEstimator, m_commonCtx, (slot) / 2, slot }
+#define GTT_BANK { GTT_JOINT_STATE(0), GTT_JOINT_STATE(1), GTT_JOINT_STATE(2), GTT_JOINT_STATE(3), \
+                   GTT_JOINT_STATE(4), GTT_JOINT_STATE(5), GTT_JOINT_STATE(6), GTT_JOINT_STATE(7) }
+  State states[3][8] = { GTT_BANK, GTT_BANK, GTT_BANK };
+  State startState GTT_JOINT_STATE(0);
+#undef GTT_BANK
+#undef GTT_JOINT_STATE
+  startState.init(layout.width, layout.height);
+  for (auto &bank: states)
+  {
+    for (auto &state: bank)
+    {
+      state.init(layout.width, layout.height);
+    }
+  }
+  State *curr = states[0], *prev = states[1], *skip = states[2];
+  bool active[3][8] = {};
+  bool *currActive = active[0], *prevActive = active[1], *skipActive = active[2];
+  struct Trace
+  {
+    int predecessorSlot = -2;
+    int nextScan = -1;
+    TCoeff absLevel = 0;
+    bool start = false;
+    bool skipCg = false;
+  };
+  std::vector<std::array<Trace, 8>> trace(constraints.maxLastScan + 1);
+  const Decision invalid { unreachable, -1, -2 };
+  int bestSlot = -1;
+  int64_t bestCost = unreachable;
+
+  for (int scanIdx = constraints.maxLastScan; scanIdx >= 0; --scanIdx)
+  {
+    std::swap(prev, curr);
+    std::swap(prevActive, currActive);
+    const ScanInfo &scanInfo = tuPars.m_scanInfo[scanIdx];
+    const auto &pq = preQuant[scanIdx];
+    std::array<Decision, 8> destinations;
+    destinations.fill(invalid);
+    const auto install = [&](const Decision &decision, const int destinationSlot)
+    {
+      if (destinationSlot >= 0 && decision.prevId != -2 &&
+          decision.rdCost < destinations[destinationSlot].rdCost)
+      {
+        destinations[destinationSlot] = decision;
+      }
+    };
+    const auto route = [&](Decision decision, const int previousSlot, const bool start)
+    {
+      if (decision.prevId == -2)
+      {
+        return;
+      }
+      const int destination = GttQuantRouting::nextSlot(previousSlot, decision.absLevel & 1, scanIdx,
+                                                        layout, constraints, g_stateTransTab[1]);
+      decision.prevId = start ? -1 : previousSlot;
+      install(decision, destination);
+    };
+    for (int slot = 0; slot < 8; ++slot)
+    {
+      if (!prevActive[slot])
+      {
+        continue;
+      }
+      const int physicalState = slot / 2;
+      Decision even = invalid, odd = invalid;
+      if (pq.nearZero)
+      {
+        prev[slot].checkRdCostsOdd1(scanInfo.spt, pq.levels[(physicalState & 1) ? 1 : 2], odd, even);
+      }
+      else
+      {
+        prev[slot].checkRdCosts(scanInfo.spt, pq.levels[(physicalState & 1) ? 3 : 0],
+                                pq.levels[(physicalState & 1) ? 1 : 2], even, odd);
+      }
+      route(even, slot, false);
+      route(odd, slot, false);
+    }
+    if (scanIdx >= constraints.minLastScan && GttQuantRouting::lastStartAllowed(scanIdx, layout, constraints))
+    {
+      const int last = rateEstimator.lastOffset(scanIdx, layout.width, layout.height,
+                                                tu.cu->slice->m_reverseLastSigCoeffFlag);
+      if (!pq.nearZero)
+      {
+        Decision even = invalid;
+        startState.checkRdCostStart(last, pq.levels[0], even);
+        route(even, 0, true);
+      }
+      Decision odd = invalid;
+      startState.checkRdCostStart(last, pq.levels[2], odd);
+      route(odd, 0, true);
+    }
+    if (scanInfo.spt == SCAN_EOCSBB)
+    {
+      for (int slot = 0; slot < 8; ++slot)
+      {
+        if (!skipActive[slot])
+        {
+          continue;
+        }
+        Decision decision = invalid;
+        skip[slot].checkRdCostSkipSbb(decision, 8);
+        // The original helper returns physicalState + skipOffset. Preserve
+        // the actual joint history slot and route sixteen zeros as identity.
+        decision.prevId = 8 + slot;
+        install(decision, GttQuantRouting::skipSlot(slot, scanIdx, layout, constraints));
+      }
+    }
+    if (scanIdx > 0 && scanInfo.eosbb)
+    {
+      m_commonCtx.swap();
+    }
+    for (int slot = 0; slot < 8; ++slot)
+    {
+      const auto &decision = destinations[slot];
+      currActive[slot] = decision.prevId != -2;
+      if (!currActive[slot])
+      {
+        continue;
+      }
+      Trace &node = trace[scanIdx][slot];
+      node.skipCg = decision.prevId >= 8;
+      node.start = decision.prevId == -1;
+      node.predecessorSlot = node.skipCg ? decision.prevId - 8 : decision.prevId;
+      node.nextScan = scanIdx + (node.skipCg ? layout.cgSize : 1);
+      node.absLevel = decision.absLevel;
+      if (scanIdx > 0)
+      {
+        if (scanInfo.eosbb)
+        {
+          curr[slot].updateStateEOS<true>(scanInfo, prev, skip, decision, 8, extRiceFlag);
+        }
+        else
+        {
+          curr[slot].updateState<true>(scanInfo, prev, decision, baseLevel, extRiceFlag);
+        }
+      }
+      else if (decision.rdCost < bestCost)
+      {
+        bestSlot = slot;
+        bestCost = decision.rdCost;
+      }
+    }
+    if (scanIdx > 0 && scanInfo.spt == SCAN_SOCSBB)
+    {
+      // prev still denotes the states before entering this coding group.
+      std::swap(prev, skip);
+      std::swap(prevActive, skipActive);
+    }
+  }
+  if (bestSlot < 0)
+  {
+    return false;
+  }
+  GttQuantResult candidate;
+  candidate.qRaster.assign(layout.numCoeff, TCoeff(0));
+  candidate.proxyCost = bestCost;
+  int slot = bestSlot;
+  for (int scanIdx = 0; scanIdx <= constraints.maxLastScan;)
+  {
+    CHECK(slot < 0 || slot >= 8, "Invalid GTT traceback slot");
+    const Trace &node = trace[scanIdx][slot];
+    CHECK(node.predecessorSlot < -1 || node.absLevel < 0, "Invalid GTT traceback node");
+    if (node.skipCg)
+    {
+      CHECK(node.start || node.absLevel || node.nextScan != scanIdx + layout.cgSize,
+            "Invalid GTT coding-group traceback jump");
+    }
+    else
+    {
+      const auto &scan = tuPars.m_scanId2BlkPos[scanIdx];
+      candidate.qRaster[scan.idx] = srcCoeff.at(scan.x, scan.y) < 0 ? -node.absLevel : node.absLevel;
+    }
+    if (node.start)
+    {
+      CHECK(!node.absLevel || scanIdx < constraints.minLastScan, "Invalid GTT last coefficient");
+      candidate.lastScan = scanIdx;
+      break;
+    }
+    slot = node.predecessorSlot;
+    scanIdx = node.nextScan;
+  }
+  CHECK(candidate.lastScan < constraints.minLastScan || candidate.lastScan > constraints.maxLastScan,
+        "GTT traceback did not reach a valid last coefficient");
+  int actualLast = -1;
+  for (int group = 0; group < 4; ++group)
+  {
+    int parity = 0;
+    for (int i = layout.groupBegin[group]; i < layout.groupEnd[group]; ++i)
+    {
+      const int64_t level = candidate.qRaster[tuPars.m_scanId2BlkPos[i].idx];
+      const int64_t magnitude = level < 0 ? -level : level;
+      candidate.absSum += magnitude;
+      parity ^= int(magnitude & 1);
+      if (level)
+      {
+        actualLast = i;
+      }
+    }
+    CHECK(constraints.requiredParity[group] >= 0 && parity != constraints.requiredParity[group],
+          "GTT traceback violates its parity constraint");
+  }
+  CHECK(actualLast != candidate.lastScan || candidate.absSum <= 0 ||
+          candidate.absSum > std::numeric_limits<TCoeff>::max(), "Invalid GTT final levels/metadata");
+  candidate.feasible = true;
+  result = std::move(candidate);
+  return true;
+}
 #endif
 
 };   // namespace DQIntern
@@ -2398,7 +2756,7 @@ void DepQuant::quant(TransformUnit &tu, const CompID &compID, const CCoeffBuf &p
   }
 }
 
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
 bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &srcCoeff,
                           const QpParam &cQP, const Ctx &ctx, const Gtt4x4Constraints &constraints,
                           Gtt4x4QuantResult &result)
@@ -2406,6 +2764,15 @@ bool DepQuant::quantGtt4x4(const TransformUnit &tu, const CompID &compID, const 
   CHECK(!m_useRDOQ, "GTT quantization requires RDOQ");
   return static_cast<DQIntern::DepQuant *>(p)->quantGtt4x4(tu, srcCoeff, compID, cQP, Quant::m_dLambda, ctx,
                                                         constraints, result);
+}
+
+bool DepQuant::quantGtt(const TransformUnit &tu, const CompID &compID, const CCoeffBuf &srcCoeff,
+                       const QpParam &cQP, const Ctx &ctx, const GttLayout &layout,
+                       const GttConstraints &constraints, GttQuantResult &result)
+{
+  CHECK(!m_useRDOQ, "GTT quantization requires RDOQ");
+  return static_cast<DQIntern::DepQuant *>(p)->quantGtt(tu, srcCoeff, compID, cQP, Quant::m_dLambda, ctx,
+                                                     layout, constraints, result);
 }
 #endif
 

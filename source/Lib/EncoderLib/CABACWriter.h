@@ -46,11 +46,22 @@
 //! \{
 
 class EncCu;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
+struct GttSizeFlagStats
+{
+  uint64_t total { 0 }, ones { 0 };
+  uint64_t fracBits[2] {};
+  uint64_t tuCount { 0 }, eligibleCount { 0 };
+  uint64_t tau[4] {}, paths[4] {};
+  uint64_t prefixRTus { 0 }, nonzeroLevels { 0 };
+  std::array<uint64_t, 1024> lastPositions {};
+};
 struct GttFlagStats
 {
   uint64_t total { 0 };
   uint64_t ones { 0 };
+  uint64_t lumaSamples { 0 };
+  std::array<GttSizeFlagStats, 4> bySize {};
 };
 #endif
 class CABACWriter : public DeriveCtx
@@ -89,9 +100,10 @@ public:
   uint64_t              getEstFracBits() const { return m_binEncoder.getEstFracBits(); }
   uint32_t              getNumBins() { return m_binEncoder.getNumBins(); }
   bool                  isEncoding() { return m_binEncoder.isEncoding(); }
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   void                  setGttFlagStats(GttFlagStats *stats) { m_gttFlagStats = stats; }
   void                  gtt_flag(const TransformUnit &tu, CompID compID);
+  void                  collectGttTuStats(const CodingUnit &cu);
 #endif
   void                  setBinBufferActive(bool b) { m_binEncoder.setBinBufferActive(b); }
   void                  setBinBuffer(BinStoreVector *bb) { m_binEncoder.setBinBuffer(bb); }
@@ -277,7 +289,7 @@ private:
   Ctx              m_testCtx;
   EncCu           *m_encCu;
   ScanElement     *m_scanOrder;
-#if HHI_GTT4X4
+#if HHI_GTT_COMMON
   GttFlagStats    *m_gttFlagStats { nullptr };
 #endif
 };
