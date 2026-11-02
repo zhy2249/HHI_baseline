@@ -10,6 +10,7 @@
 - [实验 2：多尺寸 GTT 设计与 Codex 实施规格](GTT_Experiment2_MultiSize_Design.md)：子实验1/2/3为8×8/16×16/32×32等分，4/5为16×16/32×32固定首CG对照，6为4×4迁移检查；宏与CLI按编号选择。
 - [实验 2：实施与验证记录](GTT_Experiment2_Implementation.md)：`e2-r1`的多CG量化、宽幅变换、v2/v3语法、统计及构建/合成验证；子实验1服务器结果已于2026-11-02登记。
 - [实验 2：任务预览](GTT_Experiment2_jobs_preview.csv)：六子实验、RA/LB、四QP的48任务dry-run清单；8帧仅为规划示例，不是正式实验帧数。
+- [实验 2-1：数据复核与后续实验设计](GTT_Experiment2_1_Review_and_Followup_Design.md)：独立复算、II/R 与额外全零候选的机制分析、16×16 成对试验、编码侧消融及新核/门控方向；后续方案尚未运行。
 - [实验结果数据](Experiment_Results.md)：各实验身份、逐序列/配置/QP 原始结果、整体及逐QP BD-rate 和缺失状态；含实验1及实验2_1的78个实测点、日志核验与GTT统计。
 - [实验分析](Experiment_Analysis.md)：单独维护对结果的分析、解释与后续建议；已登记实验2_1的配置/序列/QP差异、有效旋转覆盖和搜索成本分析。
 
