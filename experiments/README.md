@@ -7,3 +7,5 @@
 2026-10-31 收到实验 1 的外部结果，用户确认模板 Reference 为其正式 anchor，配置、序列、QP、帧数及采样规则一致；实际服务器配置和二进制指纹尚未随 CSV 提供。本地本轮只做结果登记和数值复算，没有运行视频编解码。
 
 2026-11-02 收到实验 2_1（8×8 等分 GTT）的 `2_1/` 原始目录，保留不动；已将 CSV 副本、填好的 `results.xlsm`、BD-rate 及统计审计存入 `experiment_002_gtt_sizes/1/`。用户确认本次继续使用当前 Reference，测试范围一致。登记 78 个实测点（AI 28、RA 22、LB 28），RA 不完整点不补齐；详细数值与解释分别见上述两份文档。工作簿及原始日志仍不上传 Git。
+
+2026-11-04 收到 `experiment_002_gtt_sizes/1.csv`…`6.csv`，每个子实验88点（AI28、RA32、LB28），用户确认同一Reference、测试范围一致且仅切换子实验。每个编号的 `batch_20261104/` 保存新CSV副本、`results.xlsm`、`bd_rate.json` 和填写核验；共同Reference快照在 `anchor/batch_20261104/`，横向与独立核验资料在 `summary_20261104/`。旧2_1的78点及工作簿原样保留，本次仅新增其10个RA点。新批只有CSV，旧日志统计不自动扩展到新增点或其它模式。上传数值见 [完整明细](../docs/experiments/GTT_Experiment2_Results_20261104.md)；工作簿、CSV和本地派生文件仍不上传。

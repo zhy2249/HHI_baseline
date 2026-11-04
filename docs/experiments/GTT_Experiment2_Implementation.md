@@ -4,7 +4,7 @@
 - 分支：`experiment/gtt-nx2high`；实现起点：`20bc2fc2d3a073af22d516e89c2a496657030bd6`。
 - 固定项目基线：`5da139f22ffe9a281d8d9e4f0b7b4b22cba5326b`，性质及既有修复见 [Baseline_Audit.md](Baseline_Audit.md)。本轮不更新 baseline manifest 或既有修复宏。
 - 设计依据：[GTT_Experiment2_MultiSize_Design.md](GTT_Experiment2_MultiSize_Design.md)，`e2-design-r1`。
-- 状态：实现已接入；四种 Release 完整构建及相应回归通过，修复后的 ASan/UBSan 合成回归 8/8 通过，48 任务 dry-run 通过。该轮本地验证未运行序列编解码；2026-11-02 收到的子实验 1 服务器结果另见 [实验结果数据](Experiment_Results.md) 与 [实验分析](Experiment_Analysis.md)。
+- 状态：实现已接入；四种 Release 完整构建及相应回归通过，修复后的 ASan/UBSan 合成回归 8/8 通过，48 任务 dry-run 通过。该轮本地验证未运行序列编解码；2026-11-04 已登记六子实验完整 CSV，结果与原 2_1 日志核验范围另见 [实验结果数据](Experiment_Results.md) 与 [实验分析](Experiment_Analysis.md)。
 
 本文记录实际实现、使用方法和验证边界。启动日志的 `revision=e2-r1` 是算法修订名，不是源码提交 SHA。构建所用源码文件指纹、宏覆盖、二进制指纹及日志路径另存于本地 `runs/gtt_experiment2_validation/validation_identity.json` 和 `build_paths.json`；只记录起点提交不能完整标识本次实现。
 
@@ -200,7 +200,7 @@ dry-run 只展开并打印任务，不探测二进制的实际启动日志；其
 
 ## 9. 正式结果登记边界
 
-2026-11-02，用户已确认子实验 1 继续使用当前 `experiments/results.xlsm` 的 Reference 作为正式 anchor，且配置、序列、QP、帧数及采样规则一致；模板指纹、78 个实测点及日志核验见 [实验结果数据](Experiment_Results.md)。该确认来自本次结果登记，不是由实验 1 自动延用。服务器精确源码提交、二进制及输入指纹仍未随本批结果提供；其它子实验使用该 anchor 前继续核对各自范围。
+2026-11-02，用户确认子实验 1 使用当前 `experiments/results.xlsm` 的 Reference；2026-11-04 又确认六个子实验都使用该共同正式 anchor，配置、序列、QP、帧数及采样规则一致，仅切换子实验编号。模板未变，快照和各自完整88点见 [实验结果数据](Experiment_Results.md) 及 [数值明细](GTT_Experiment2_Results_20261104.md)。这些确认来自结果登记，不是由实验 1 自动延用。新批只有 CSV，服务器精确源码提交、二进制/配置/输入指纹和新增模式日志尚未提供，不能把原 2_1 的日志核验范围扩大到全部模式。
 
 结果沿用 `experiments/experiment_002_gtt_sizes/` 下的 `anchor/` 和 `1/`…`6/` 独立目录，每个子实验各有工作簿与 CSV，避免多个子实验写同一 Test 页。按准确序列/QP/配置匹配导入，保留 Reference/VBA，缺点留空并清除旧计算缓存。原始表格、码流、大日志和视频不上传 Git。
 
